@@ -1,0 +1,82 @@
+{
+  "design_system": {
+    "theme": "dark",
+    "archetype": "Archetype 2: The Performance Pro (Industrial Control Room Variant)",
+    "emotional_tone": "Utilitarian, hyper-clear, objective, and urgent. Must look like a mission-critical tactical interface on a factory floor.",
+    "typography": {
+      "heading_font": "Chivo",
+      "body_font": "IBM Plex Sans",
+      "hierarchy_rules": {
+        "h1_big_screen": "text-6xl sm:text-7xl lg:text-[5vw] font-black tracking-tighter uppercase leading-none",
+        "h2_headers": "text-3xl sm:text-4xl font-bold tracking-tight",
+        "h3_subheaders": "text-xl sm:text-2xl font-semibold",
+        "body": "text-lg md:text-xl",
+        "labels": "text-sm font-bold tracking-[0.2em] uppercase text-zinc-400",
+        "general": "No generic sans for headings. Use Chivo for strict geometric technical feel, IBM Plex Sans for legible data."
+      }
+    },
+    "colors": {
+      "background_base": "#0A0A0A",
+      "background_surface": "#1A1A1A",
+      "text_primary": "#FFFFFF",
+      "text_secondary": "#A1A1AA",
+      "primary_action": "#007AFF",
+      "accent_alert": "#FF3B30",
+      "accent_success": "#34C759",
+      "grid_border": "rgba(255, 255, 255, 0.15)",
+      "rules": "Contrast ratios must exceed 4.5:1. Red/Orange used strictly for shortages against dark backgrounds."
+    },
+    "layout": {
+      "strategy": "The 'Control Room' Grid",
+      "spacing": "Tight (gap-4) on the matrix. Use generous padding (p-8) for main containers to avoid edge collision.",
+      "grid_rules": "Strict alignment. Main schedule board must use 'Grid Borders' style (exposed skeleton, border-collapse).",
+      "alignment": "Left-align tabular data and headers. Top-left F-pattern for primary KPIs like the Date."
+    },
+    "surfaces": {
+      "matrix_cells": "Flat background, 1px solid border (border-white/15), NO shadow. Hover state: bg-white/5.",
+      "alerts": "Sharp 1px border with high-contrast text. For shortages: bg-red-950/30 border-red-500.",
+      "modals_setup": "Solid dark grey backgrounds (#1A1A1A) with 1px border-white/10. No glassmorphism."
+    },
+    "components": {
+      "schedule_matrix": "Custom HTML/Tailwind grid or table. sticky top headers for assembly lines, sticky left column for details.",
+      "absent_selector": "Dense scrollable list of chips or Shadcn Checkboxes for the 77 people.",
+      "action_buttons": "Shadcn Button, styled flat, rectangular (rounded-none or rounded-sm), 1px borders.",
+      "data_testid_requirement": "All interactive elements, cells, buttons, and inputs MUST include data-testid attributes."
+    },
+    "icons": {
+      "library": "@phosphor-icons/react",
+      "usage": "Use bold weights. Keep it minimal and functional."
+    },
+    "motion_and_interactions": {
+      "rules": "Minimalist. Use animate-pulse ONLY for critical shortage warnings.",
+      "hover_states": "Explicitly set hover:text-white and hover:bg-white/10 on interactive rows."
+    }
+  },
+  "media": {
+    "image_urls": [
+      {
+        "category": "setup_page_background",
+        "url": "https://images.pexels.com/photos/19233057/pexels-photo-19233057.jpeg",
+        "description": "High-tech factory assembly line. Apply bg-black/80 overlay. Use behind the setup/configuration screens."
+      },
+      {
+        "category": "placeholder_avatar",
+        "url": "https://images.unsplash.com/photo-1581091224003-01e7c2e69f6f",
+        "description": "Manufacturing engineer portrait. Use for profile avatars or Persons list."
+      }
+    ],
+    "rules": "NEVER use placeholder services like dummyimage or placehold.it. Use these specific URLs."
+  },
+  "instructions_to_main_agent": [
+    "Build a Hybrid Fullstack app focusing on an 'Admin Setup View' and a 'Big Screen TV Dashboard View'.",
+    "Install dependencies: yarn add @phosphor-icons/react",
+    "Font Setup: Import 'Chivo' and 'IBM Plex Sans' from Google Fonts in index.css.",
+    "Dashboard Matrix: Implement a highly legible CSS Grid or Table. Left column = 'Details/Sub-tasks', Top row = 'Assembly Lines'. Inside cells = 'Assigned Person Names'.",
+    "Grid Borders Strategy: Apply 1px solid borders (border-white/15) between all cells. No rounded corners inside the matrix.",
+    "Shortage Warnings: If algorithm detects missing personnel, style the cell with border-red-500, text-red-500, and include a pulsing warning icon. MUST be extremely visible from a distance.",
+    "Setup Screen: Build a dense UI for selecting Date, toggling Active Assembly Lines, and a searchable chip-list to mark absent persons out of the 77 people.",
+    "Algorithm Logic (UI representation): Ensure the backend/frontend logic handles 'Specialist First' and 'One assignment per person per day' and correctly maps them to the UI state.",
+    "Export & Upload: Add prominent utility buttons (Volt Blue or clear outlined buttons) for 'Upload Excel' and 'Export PDF/Excel' in the header area.",
+    "Testing: Add data-testid to EVERY clickable element and schedule cell."
+  ]
+}
