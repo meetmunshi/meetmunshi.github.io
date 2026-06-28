@@ -1,0 +1,28 @@
+{
+  "summary": "Latency-sensitive first-finish testing of FFM-OPS resource scheduling app. Backend endpoints (stats, persons, lines, details, schedule POST/GET, export, upload-excel) all return expected shapes and counts (77 persons, 63 details, 14 lines). Algorithm correctness verified: assigned persons all have the required skill, no duplicate person across details on same date, absentees correctly excluded, specialist-first ordering confirmed (lowest skill-count candidates picked first), upsert on same date works. Frontend: Setup page renders 14 line toggles + 77 absentee checkboxes, search filter works, Generate Schedule navigates to /board, board shows date in huge type, summary chips, 882 matrix cells, red shortage banner appears when shortage exists, export-xlsx-btn href points to /api/export/{date}. Persons page lists 77 with progress bars. Upload page shows stats and Import button after file selection.",
+  "tested_scope": ["backend", "frontend", "integration"],
+  "passed": [
+    "GET /api/stats -> persons=77 details=63 lines=14",
+    "GET /api/persons -> 77 records, no _id leakage, contains skills dict",
+    "GET /api/lines -> 14 lines with details arrays (wrapped under 'lines' key)",
+    "GET /api/details -> 63 rows",
+    "POST /api/schedule -> generates assignments; all assigned have skill; no duplicate person across details same date; total_shortage computed",
+    "Absent person IDs correctly excluded from assignments",
+    "Specialist-first ordering verified: assigned persons had skill counts [6,6,6,6] from candidate pool min=6, max=30",
+    "GET /api/schedule/{date} returns 200; POST upserts (re-POST with different lines replaced selection)",
+    "GET /api/export/{date} returns 200 with content-type application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "POST /api/upload-excel accepts seed_data.xlsx; stats remain 77/63/14",
+    "Frontend Setup page: 14 line-toggle-* + 77 absent-cb-* present, absent-search-input filters correctly (1 result for 'Viral')",
+    "Generate Schedule navigates to /board?date=...; board-date shows huge date text 'SUNDAY, JUNE 28, 2026'",
+    "schedule-matrix renders; 882 cell-<detail>-<line> testids found",
+    "Shortage banner 'CRITICAL: 31 POSITIONS UNFILLED' visible in red when shortage exists",
+    "export-xlsx-btn anchor href = /api/export/2026-06-28",
+    "Persons page shows 77 rows; Upload page shows stats chips (77/63/14/3) and Import button appears after file selection"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true,
+  "notes": "upload-confirm-btn only renders after a file is selected (expected behavior). Default date on Setup page is today (2026-06-28) rather than a fixed date — UI flow still works. No console errors observed."
+}
