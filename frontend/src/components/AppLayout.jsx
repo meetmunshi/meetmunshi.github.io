@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useSearchParams } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import {
     Factory,
@@ -8,6 +8,7 @@ import {
     Monitor,
     BarChart3,
     CalendarDays,
+    Flame,
 } from "lucide-react";
 
 const navItems = [
@@ -15,13 +16,17 @@ const navItems = [
     { to: "/board", icon: Monitor, label: "Board", testid: "nav-board" },
     { to: "/history", icon: CalendarDays, label: "History", testid: "nav-history" },
     { to: "/analytics", icon: BarChart3, label: "Analytics", testid: "nav-analytics" },
+    { to: "/heatmap", icon: Flame, label: "Heatmap", testid: "nav-heatmap" },
     { to: "/persons", icon: Users, label: "Persons", testid: "nav-persons" },
     { to: "/upload", icon: Upload, label: "Upload", testid: "nav-upload" },
 ];
 
 export default function AppLayout() {
+    const [params] = useSearchParams();
+    const tv = params.get("tv") === "1";
     return (
         <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col md:flex-row">
+            {!tv && (
             <aside
                 className="w-full md:w-56 md:shrink-0 border-b md:border-b-0 md:border-r border-white/10 bg-[#0a0a0a] flex md:flex-col no-print overflow-x-auto md:overflow-visible"
                 data-testid="app-sidebar"
@@ -63,6 +68,7 @@ export default function AppLayout() {
                     v2.0 · Control Room
                 </div>
             </aside>
+            )}
             <main className="flex-1 min-w-0">
                 <Outlet />
             </main>

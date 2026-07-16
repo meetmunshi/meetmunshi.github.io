@@ -7,6 +7,7 @@ import PersonsPage from "@/pages/PersonsPage";
 import UploadPage from "@/pages/UploadPage";
 import AnalyticsPage from "@/pages/AnalyticsPage";
 import HistoryPage from "@/pages/HistoryPage";
+import HeatmapPage from "@/pages/HeatmapPage";
 
 function App() {
     return (
@@ -18,6 +19,7 @@ function App() {
                         <Route path="/board" element={<BoardPage />} />
                         <Route path="/history" element={<HistoryPage />} />
                         <Route path="/analytics" element={<AnalyticsPage />} />
+                        <Route path="/heatmap" element={<HeatmapPage />} />
                         <Route path="/persons" element={<PersonsPage />} />
                         <Route path="/upload" element={<UploadPage />} />
                     </Route>

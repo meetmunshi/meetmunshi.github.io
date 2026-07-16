@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { toast } from "sonner";
+import html2canvas from "html2canvas";
 import {
     fetchSchedule,
     exportScheduleUrl,
@@ -25,6 +26,8 @@ import {
     Pencil,
     UserX,
     RotateCcw,
+    RefreshCw,
+    Camera,
 } from "lucide-react";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -46,19 +49,67 @@ export default function BoardPage() {
     const [params, setParams] = useSearchParams();
     const date = params.get("date") || todayISO();
     const shift = params.get("shift") || "day";
+    const tvMode = params.get("tv") === "1";
     const [schedule, setSchedule] = useState(null);
     const [persons, setPersons] = useState([]);
     const [loading, setLoading] = useState(false);
-    const [tvMode, setTvMode] = useState(false);
     const [editCell, setEditCell] = useState(null);
+    const [lastFetched, setLastFetched] = useState(null);
+    const [tick, setTick] = useState(0);
+    const boardRef = useRef(null);
+
+    const setTv = (on) => {
+        const p = { date, shift };
+        if (on) p.tv = "1";
+        setParams(p);
+    };
 
     const load = () => {
         setLoading(true);
         Promise.all([fetchSchedule(date, shift), fetchPersons()])
-            .then(([s, p]) => { setSchedule(s); setPersons(p); })
+            .then(([s, p]) => { setSchedule(s); setPersons(p); setLastFetched(Date.now()); })
             .finally(() => setLoading(false));
     };
     useEffect(load, [date, shift]);
+
+    // "Updated N ago" ticker
+    useEffect(() => {
+        const t = setInterval(() => setTick((v) => v + 1), 30000);
+        return () => clearInterval(t);
+    }, []);
+
+    const updatedLabel = useMemo(() => {
+        if (!lastFetched) return "";
+        void tick;
+        const s = Math.floor((Date.now() - lastFetched) / 1000);
+        if (s < 60) return "Updated just now";
+        const m = Math.floor(s / 60);
+        if (m < 60) return `Updated ${m} min ago`;
+        const h = Math.floor(m / 60);
+        return `Updated ${h}h ${m % 60}m ago`;
+    }, [lastFetched, tick]);
+
+    const takeScreenshot = async () => {
+        if (!boardRef.current) return;
+        try {
+            const canvas = await html2canvas(boardRef.current, {
+                backgroundColor: "#0a0a0a",
+                scale: 2,
+                useCORS: true,
+            });
+            canvas.toBlob((blob) => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `schedule-${date}-${shift}.png`;
+                a.click();
+                URL.revokeObjectURL(url);
+                toast.success("Screenshot saved");
+            });
+        } catch (e) {
+            toast.error("Screenshot failed: " + e.message);
+        }
+    };
 
     const personById = useMemo(() => {
         const m = {};
@@ -184,11 +235,16 @@ export default function BoardPage() {
     };
 
     return (
-        <div className={tvMode ? "p-4 bg-black min-h-screen" : "p-6 md:p-8"}>
+        <div className={tvMode ? "p-4 bg-black min-h-screen" : "p-6 md:p-8"} ref={boardRef}>
             <header className="flex flex-wrap items-start justify-between gap-4 mb-5 no-print">
                 <div>
                     <div className="text-[10px] tracking-[0.3em] uppercase text-zinc-500 mb-1">
-                        Production Board · <span className="text-[#007AFF]">{shift}</span>
+                        Daily Resource Scheduling Board · <span className="text-[#007AFF]">{shift}</span>
+                        {updatedLabel && (
+                            <span className="ml-3 text-zinc-600 normal-case tracking-normal">
+                                · <span data-testid="updated-label">{updatedLabel}</span>
+                            </span>
+                        )}
                     </div>
                     <h1
                         className="font-chivo font-black uppercase tracking-tighter leading-none text-[clamp(2rem,4.5vw,5rem)]"
@@ -201,13 +257,13 @@ export default function BoardPage() {
                     <input
                         type="date"
                         value={date}
-                        onChange={(e) => setParams({ date: e.target.value, shift })}
+                        onChange={(e) => setParams({ date: e.target.value, shift, ...(tvMode ? {tv:"1"} : {}) })}
                         data-testid="board-date-input"
                         className="bg-[#111] border border-white/10 px-3 py-2 text-sm font-mono-ibm rounded-none text-white"
                     />
                     <select
                         value={shift}
-                        onChange={(e) => setParams({ date, shift: e.target.value })}
+                        onChange={(e) => setParams({ date, shift: e.target.value, ...(tvMode ? {tv:"1"} : {}) })}
                         data-testid="board-shift-select"
                         className="bg-[#111] border border-white/10 px-3 py-2 text-sm rounded-none text-white uppercase"
                     >
@@ -217,12 +273,28 @@ export default function BoardPage() {
                     </select>
                     <Button
                         variant="outline"
-                        onClick={() => setTvMode((v) => !v)}
+                        onClick={load}
+                        data-testid="refresh-btn"
+                        className="rounded-none border-white/15 text-white bg-transparent hover:bg-white/10 uppercase tracking-widest text-xs"
+                    >
+                        <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} /> Refresh
+                    </Button>
+                    <Button
+                        variant="outline"
+                        onClick={() => setTv(!tvMode)}
                         data-testid="tv-mode-btn"
                         className="rounded-none border-white/15 text-white bg-transparent hover:bg-white/10 uppercase tracking-widest text-xs"
                     >
                         <Maximize2 className="w-4 h-4 mr-2" />
                         {tvMode ? "Exit TV" : "TV Mode"}
+                    </Button>
+                    <Button
+                        variant="outline"
+                        onClick={takeScreenshot}
+                        data-testid="screenshot-btn"
+                        className="rounded-none border-white/15 text-white bg-transparent hover:bg-white/10 uppercase tracking-widest text-xs"
+                    >
+                        <Camera className="w-4 h-4 mr-2" /> Snapshot
                     </Button>
                     <Button
                         variant="outline"
@@ -271,7 +343,7 @@ export default function BoardPage() {
                     <thead>
                         <tr>
                             <th className="sticky left-0 bg-[#0a0a0a] z-20 grid-cell px-4 py-3 text-left text-[11px] uppercase tracking-[0.25em] text-zinc-400 font-bold w-[220px]">
-                                Row Name
+                                Area
                             </th>
                             {colKeys.map((k) => (
                                 <th
@@ -283,7 +355,7 @@ export default function BoardPage() {
                                 </th>
                             ))}
                             <th
-                                className="grid-cell px-4 py-3 text-left font-chivo uppercase font-bold text-base md:text-lg tracking-tight bg-[#111] w-[220px]"
+                                className="grid-cell px-4 py-3 text-left font-chivo uppercase font-bold text-base md:text-lg tracking-tight bg-[#111] w-[260px]"
                                 data-testid="col-header-support"
                             >
                                 Support Ops
@@ -294,10 +366,10 @@ export default function BoardPage() {
                         {rowNames.map((rn, rIdx) => (
                             <tr key={rn}>
                                 <th
-                                    className="sticky left-0 bg-[#0a0a0a] z-10 grid-cell px-4 py-3 text-left text-sm font-semibold text-zinc-200"
+                                    className="sticky left-0 bg-[#0a0a0a] z-10 grid-cell px-4 py-3 text-left text-sm font-bold text-zinc-100 uppercase tracking-wide"
                                     data-testid={`row-header-${rn}`}
                                 >
-                                    {rn}
+                                    {rn.toUpperCase()}
                                 </th>
                                 {colKeys.map((k) => {
                                     const a = matrix[rn + "||" + k];
@@ -352,7 +424,7 @@ export default function BoardPage() {
                                 {rIdx === 0 && (
                                     <td
                                         rowSpan={rowNames.length}
-                                        className="grid-cell px-3 py-2 align-top bg-[#0a0a0a] w-[220px]"
+                                        className="grid-cell px-3 py-2 align-top bg-[#0a0a0a] w-[260px]"
                                         data-testid="support-cell"
                                     >
                                         <div className="flex flex-col divide-y divide-white/10">
@@ -561,21 +633,21 @@ function SupportBlock({ item, onEdit }) {
     if (!item.planned) {
         return (
             <div
-                className="py-2"
+                className="py-2.5"
                 data-testid={`support-line-${item.line}-not-planned`}
             >
-                <div className="text-[11px] font-chivo uppercase font-bold tracking-tight text-zinc-500">
+                <div className="text-sm font-chivo uppercase font-bold tracking-tight text-zinc-500">
                     {item.line}
                 </div>
-                <div className="text-[10px] italic text-zinc-600 mt-0.5">
+                <div className="text-xs italic text-zinc-600 mt-1">
                     not planned today
                 </div>
             </div>
         );
     }
     return (
-        <div className="py-2" data-testid={`support-line-${item.line}`}>
-            <div className="text-[11px] font-chivo uppercase font-bold tracking-tight text-[#007AFF]">
+        <div className="py-2.5" data-testid={`support-line-${item.line}`}>
+            <div className="text-sm font-chivo uppercase font-bold tracking-tight text-[#007AFF]">
                 {item.line}
             </div>
             {item.assignments.map((a) => {
@@ -585,27 +657,27 @@ function SupportBlock({ item, onEdit }) {
                         type="button"
                         key={a.line_key + "||" + a.row_name}
                         onClick={() => onEdit(a)}
-                        className={`w-full text-left mt-1 px-2 py-1 group ${
+                        className={`w-full text-left mt-1.5 px-2 py-1.5 group ${
                             shortage
                                 ? "border border-red-500 bg-red-950/30"
                                 : "hover:bg-white/5 border border-transparent"
                         }`}
                         data-testid={`support-cell-${a.line}-${a.row_name}`}
                     >
-                        <div className="text-[9px] uppercase tracking-widest text-zinc-500">
-                            {a.row_name}
+                        <div className="text-[10px] uppercase tracking-widest text-zinc-500">
+                            {a.row_name.toUpperCase()}
                         </div>
                         {a.assigned_person_names.length === 0 ? (
-                            <div className="text-[11px] italic text-zinc-600">unassigned</div>
+                            <div className="text-sm italic text-zinc-600">unassigned</div>
                         ) : (
                             a.assigned_person_names.map((n, i) => (
-                                <div key={i} className="text-xs font-semibold text-white leading-tight">
+                                <div key={i} className="text-sm font-semibold text-white leading-snug">
                                     {n}
                                 </div>
                             ))
                         )}
                         {shortage && (
-                            <div className="text-[9px] text-red-400 uppercase tracking-widest font-bold mt-0.5">
+                            <div className="text-[10px] text-red-400 uppercase tracking-widest font-bold mt-0.5">
                                 Short by {a.shortage}
                             </div>
                         )}
