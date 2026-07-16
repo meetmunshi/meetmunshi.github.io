@@ -29,6 +29,9 @@ import {
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
+// Small "support" lines merged into one rightmost column
+const SUPPORT_LINES = ["Monkey", "KK", "Spares", "Vehicle", "Crimping", "OS", "5S+Others"];
+
 function formatLongDate(iso) {
     if (!iso) return "";
     try {
@@ -63,14 +66,17 @@ export default function BoardPage() {
         return m;
     }, [persons]);
 
-    const { rowNames, colKeys, matrix, summary, absentPersons } = useMemo(() => {
-        if (!schedule) return { rowNames: [], colKeys: [], matrix: {}, summary: null, absentPersons: [] };
+    const { rowNames, colKeys, matrix, summary, absentPersons, supportItems, plannedLines } = useMemo(() => {
+        if (!schedule) return { rowNames: [], colKeys: [], matrix: {}, summary: null, absentPersons: [], supportItems: [], plannedLines: new Set() };
         const cols = [];
         const seenCol = new Set();
+        const planned = new Set();
         (schedule.line_configs || [])
             .slice()
             .sort((a, b) => a.priority - b.priority || a.line.localeCompare(b.line))
             .forEach((c) => {
+                planned.add(c.line);
+                if (SUPPORT_LINES.includes(c.line)) return; // handled separately
                 for (let r = 1; r <= (c.run_count || 1); r++) {
                     const k = r === 1 ? c.line : `${c.line} #${r}`;
                     if (!seenCol.has(k)) { cols.push(k); seenCol.add(k); }
@@ -81,9 +87,23 @@ export default function BoardPage() {
         const seenR = new Set();
         const mtx = {};
         (schedule.assignments || []).forEach((a) => {
+            if (SUPPORT_LINES.includes(a.line)) return;
             if (!seenR.has(a.row_name)) { rns.push(a.row_name); seenR.add(a.row_name); }
             mtx[a.row_name + "||" + a.line_key] = a;
         });
+
+        // Support column items: one entry per small line
+        const suppByLine = {};
+        (schedule.assignments || []).forEach((a) => {
+            if (!SUPPORT_LINES.includes(a.line)) return;
+            if (!suppByLine[a.line]) suppByLine[a.line] = [];
+            suppByLine[a.line].push(a);
+        });
+        const supp = SUPPORT_LINES.map((line) => ({
+            line,
+            planned: planned.has(line),
+            assignments: suppByLine[line] || [],
+        }));
 
         const abs = (schedule.absent_person_ids || [])
             .map((id) => personById[id])
@@ -97,15 +117,21 @@ export default function BoardPage() {
                 shortage: schedule.total_shortage,
             },
             absentPersons: abs,
+            supportItems: supp,
+            plannedLines: planned,
         };
     }, [schedule, personById]);
 
-    const busyPersonIds = useMemo(() => {
-        const s = new Set();
-        (schedule?.assignments || []).forEach((a) =>
-            a.assigned_person_ids.forEach((id) => s.add(id)),
-        );
-        return s;
+    // Map: person_id -> list of {row_name, line_key} they're currently assigned to
+    const personLocations = useMemo(() => {
+        const m = {};
+        (schedule?.assignments || []).forEach((a) => {
+            a.assigned_person_ids.forEach((id) => {
+                if (!m[id]) m[id] = [];
+                m[id].push({ row_name: a.row_name, line_key: a.line_key });
+            });
+        });
+        return m;
     }, [schedule]);
 
     if (loading) return <div className="p-12 text-zinc-500">Loading…</div>;
@@ -256,10 +282,16 @@ export default function BoardPage() {
                                     {k}
                                 </th>
                             ))}
+                            <th
+                                className="grid-cell px-4 py-3 text-left font-chivo uppercase font-bold text-base md:text-lg tracking-tight bg-[#111] w-[220px]"
+                                data-testid="col-header-support"
+                            >
+                                Support Ops
+                            </th>
                         </tr>
                     </thead>
                     <tbody>
-                        {rowNames.map((rn) => (
+                        {rowNames.map((rn, rIdx) => (
                             <tr key={rn}>
                                 <th
                                     className="sticky left-0 bg-[#0a0a0a] z-10 grid-cell px-4 py-3 text-left text-sm font-semibold text-zinc-200"
@@ -317,6 +349,23 @@ export default function BoardPage() {
                                         </td>
                                     );
                                 })}
+                                {rIdx === 0 && (
+                                    <td
+                                        rowSpan={rowNames.length}
+                                        className="grid-cell px-3 py-2 align-top bg-[#0a0a0a] w-[220px]"
+                                        data-testid="support-cell"
+                                    >
+                                        <div className="flex flex-col divide-y divide-white/10">
+                                            {supportItems.map((s) => (
+                                                <SupportBlock
+                                                    key={s.line}
+                                                    item={s}
+                                                    onEdit={(a) => openEdit(a)}
+                                                />
+                                            ))}
+                                        </div>
+                                    </td>
+                                )}
                             </tr>
                         ))}
                         {/* Absent row */}
@@ -330,7 +379,7 @@ export default function BoardPage() {
                                 </div>
                             </th>
                             <td
-                                colSpan={colKeys.length}
+                                colSpan={colKeys.length + 1}
                                 className="grid-cell px-3 py-3 bg-red-950/20"
                                 data-testid="absent-row-cell"
                             >
@@ -377,7 +426,8 @@ export default function BoardPage() {
                             required={editCell.required}
                             initialIds={editCell.assigned_person_ids}
                             persons={persons}
-                            busyPersonIds={busyPersonIds}
+                            personLocations={personLocations}
+                            currentCellKey={`${editCell.row_name}||${editCell.line_key}`}
                             absentIds={new Set(schedule.absent_person_ids || [])}
                             onSave={savePicks}
                             onClear={clearCell}
@@ -391,11 +441,11 @@ export default function BoardPage() {
 }
 
 function PersonPicker({
-    detail, required, initialIds, persons, busyPersonIds, absentIds, onSave, onClear, onCancel,
+    detail, required, initialIds, persons, personLocations, currentCellKey,
+    absentIds, onSave, onClear, onCancel,
 }) {
     const [picks, setPicks] = useState(new Set(initialIds));
     const [search, setSearch] = useState("");
-    const initialSet = useMemo(() => new Set(initialIds), [initialIds]);
 
     const eligible = useMemo(() => {
         const q = search.trim().toLowerCase();
@@ -434,7 +484,10 @@ function PersonPicker({
                 )}
                 {eligible.map((p) => {
                     const checked = picks.has(p.id);
-                    const busy = busyPersonIds.has(p.id) && !initialSet.has(p.id);
+                    const locs = (personLocations[p.id] || []).filter(
+                        (l) => `${l.row_name}||${l.line_key}` !== currentCellKey,
+                    );
+                    const busy = locs.length > 0;
                     return (
                         <label
                             key={p.id}
@@ -447,16 +500,28 @@ function PersonPicker({
                                 checked={checked}
                                 onCheckedChange={() => toggle(p.id)}
                                 data-testid={`pick-cb-${p.id}`}
-                                className="border-white/20 data-[state=checked]:bg-[#007AFF] rounded-none"
+                                className="border-white/20 data-[state=checked]:bg-[#007AFF] rounded-none mt-0.5"
                             />
-                            <span className="flex-1 text-sm">{p.name} {p.surname}</span>
-                            {busy && (
-                                <span className="text-[9px] uppercase tracking-widest text-amber-400">
-                                    on other line
-                                </span>
-                            )}
-                            <span className="text-[10px] font-mono-ibm text-zinc-500">
-                                {Object.values(p.skills || {}).filter(Boolean).length} sk
+                            <div className="flex-1 min-w-0">
+                                <div className="text-sm">{p.name} {p.surname}</div>
+                                {busy && (
+                                    <div className="text-[10px] text-amber-400 mt-0.5">
+                                        Currently on:{" "}
+                                        {locs.map((l, i) => (
+                                            <span key={i}>
+                                                <span className="font-semibold">{l.line_key}</span>
+                                                <span className="text-amber-500/70"> · {l.row_name}</span>
+                                                {i < locs.length - 1 ? ", " : ""}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                            <span
+                                className="text-[10px] font-mono-ibm text-zinc-500 whitespace-nowrap"
+                                title="Total skills this person has"
+                            >
+                                {Object.values(p.skills || {}).filter(Boolean).length} skills
                             </span>
                         </label>
                     );
@@ -488,6 +553,65 @@ function PersonPicker({
                     Save
                 </Button>
             </DialogFooter>
+        </div>
+    );
+}
+
+function SupportBlock({ item, onEdit }) {
+    if (!item.planned) {
+        return (
+            <div
+                className="py-2"
+                data-testid={`support-line-${item.line}-not-planned`}
+            >
+                <div className="text-[11px] font-chivo uppercase font-bold tracking-tight text-zinc-500">
+                    {item.line}
+                </div>
+                <div className="text-[10px] italic text-zinc-600 mt-0.5">
+                    not planned today
+                </div>
+            </div>
+        );
+    }
+    return (
+        <div className="py-2" data-testid={`support-line-${item.line}`}>
+            <div className="text-[11px] font-chivo uppercase font-bold tracking-tight text-[#007AFF]">
+                {item.line}
+            </div>
+            {item.assignments.map((a) => {
+                const shortage = a.shortage > 0;
+                return (
+                    <button
+                        type="button"
+                        key={a.line_key + "||" + a.row_name}
+                        onClick={() => onEdit(a)}
+                        className={`w-full text-left mt-1 px-2 py-1 group ${
+                            shortage
+                                ? "border border-red-500 bg-red-950/30"
+                                : "hover:bg-white/5 border border-transparent"
+                        }`}
+                        data-testid={`support-cell-${a.line}-${a.row_name}`}
+                    >
+                        <div className="text-[9px] uppercase tracking-widest text-zinc-500">
+                            {a.row_name}
+                        </div>
+                        {a.assigned_person_names.length === 0 ? (
+                            <div className="text-[11px] italic text-zinc-600">unassigned</div>
+                        ) : (
+                            a.assigned_person_names.map((n, i) => (
+                                <div key={i} className="text-xs font-semibold text-white leading-tight">
+                                    {n}
+                                </div>
+                            ))
+                        )}
+                        {shortage && (
+                            <div className="text-[9px] text-red-400 uppercase tracking-widest font-bold mt-0.5">
+                                Short by {a.shortage}
+                            </div>
+                        )}
+                    </button>
+                );
+            })}
         </div>
     );
 }

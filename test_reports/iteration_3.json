@@ -1,0 +1,27 @@
+{
+  "summary": "Iteration 3 latency-sensitive verification of the compressed 'Support Ops' rightmost column, 'Currently on: <line_key> · <row_name>' amber indicator, and the 'N skills' rename (from 'N sk'). Backend smoke unchanged.",
+  "tested_scope": ["backend", "frontend", "integration"],
+  "passed": [
+    "GET /api/stats -> persons=76, details=72, lines=15 (baseline intact)",
+    "POST /api/schedule with X-Smart run_count=1, E2, Spares, Crimping returns line_keys ['Spares','X-Smart','E2','Crimping'] (also verified run_count=2 produces 'X-Smart #2' in a separate call)",
+    "Board /board?date=2026-07-16&shift=day loads without console errors (only benign Radix Dialog aria-describedby warnings)",
+    "col-header-support present with visible text 'Support Ops' and is the RIGHTMOST header (header order: X-Smart, E2, support)",
+    "None of Monkey/KK/Spares/Vehicle/Crimping/OS/5S+Others appear as main-matrix col-header-<line> (all excluded from main matrix)",
+    "support-line-Spares and support-line-Crimping present with assigned person names (e.g., Viral Prajapati under Spares, Rita Chauhan under Crimping)",
+    "support-line-{Monkey,KK,Vehicle,OS,5S+Others}-not-planned all present with 'not planned today' text",
+    "absent-row-cell renders with colspan=3 (2 main cols + 1 support col) — single wide cell as required",
+    "Clicking support entry support-cell-Spares-spares opens edit-cell-dialog (same manual adjustment dialog)",
+    "Reassign dialog for main-matrix cell 'p&c assembly × X-Smart' displays 'Currently on: Spares · spares' (Viral Prajapati) and 'Currently on: X-Smart · testing' (Harshad Parmar) in amber styling (36 amber-classed elements in dialog)",
+    "Only planned lines (Spares, X-Smart) appear as targets in 'Currently on' indicator — no reference to not-planned lines (Monkey/KK/Vehicle/OS/5S+Others)",
+    "Skills label rename verified visually: '27 skills', '20 skills', '15 skills', '14 skills', '6 skills' on candidate rows; zero legacy 'N sk' occurrences"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true,
+  "notes": [
+    "'Currently on:' regex against inner_html returned 0 matches due to nested span/tag structure, but screenshot confirms the text renders correctly in amber for candidates on other planned lines (Viral Prajapati → Spares·spares, Harshad Parmar → X-Smart·testing).",
+    "Public preview URL used: https://resource-scheduler-8.preview.emergentagent.com"
+  ]
+}
