@@ -92,13 +92,7 @@ class Schedule(BaseModel):
 
 
 # ----------------- Excel parsing & seeding -----------------
-def parse_excel_bytes(content: bytes) -> Tuple[List[Person], List[LineDetail]]:
-    wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
-    sheet_names = {s.lower(): s for s in wb.sheetnames}
-    persons_sheet = sheet_names.get("person - skill") or wb.sheetnames[0]
-    lines_sheet = sheet_names.get("assembly line") or wb.sheetnames[1]
-
-    ws = wb[persons_sheet]
+def _parse_persons_sheet(ws) -> List[Person]:
     headers = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
     skill_start_col = 9
     skill_headers = [str(h).strip() for h in headers[skill_start_col - 1:] if h]
@@ -108,46 +102,55 @@ def parse_excel_bytes(content: bytes) -> Tuple[List[Person], List[LineDetail]]:
         name = ws.cell(row=r, column=2).value
         if not name:
             continue
-        sn = ws.cell(row=r, column=1).value
-        surname = ws.cell(row=r, column=3).value or ""
-        qualification = ws.cell(row=r, column=5).value or ""
-        emp_type = ws.cell(row=r, column=6).value or ""
-        mobile = ws.cell(row=r, column=8).value or ""
-        skills: Dict[str, bool] = {}
-        for i, sk in enumerate(skill_headers):
-            v = ws.cell(row=r, column=skill_start_col + i).value
-            skills[sk] = str(v).strip().lower() == "yes" if v is not None else False
-
+        sn_v = ws.cell(row=r, column=1).value
+        skills = {
+            sk: (str(ws.cell(row=r, column=skill_start_col + i).value).strip().lower() == "yes"
+                 if ws.cell(row=r, column=skill_start_col + i).value is not None else False)
+            for i, sk in enumerate(skill_headers)
+        }
         persons.append(Person(
-            sn=int(sn) if isinstance(sn, (int, float)) else None,
+            sn=int(sn_v) if isinstance(sn_v, (int, float)) else None,
             name=str(name).strip(),
-            surname=str(surname).strip(),
-            qualification=str(qualification).strip(),
-            employee_type=str(emp_type).strip(),
-            mobile=str(mobile).strip(),
+            surname=str(ws.cell(row=r, column=3).value or "").strip(),
+            qualification=str(ws.cell(row=r, column=5).value or "").strip(),
+            employee_type=str(ws.cell(row=r, column=6).value or "").strip(),
+            mobile=str(ws.cell(row=r, column=8).value or "").strip(),
             skills=skills,
         ))
+    return persons
 
-    ws2 = wb[lines_sheet]
-    # header row: col2=Detail col3=Assembly Line col4=persons required col5=Row name (optional)
+
+def _coerce_int(v) -> int:
+    try:
+        return int(v) if v is not None else 0
+    except (ValueError, TypeError):
+        return 0
+
+
+def _parse_lines_sheet(ws) -> List[LineDetail]:
     details: List[LineDetail] = []
-    for r in range(2, ws2.max_row + 1):
-        detail = ws2.cell(row=r, column=2).value
-        line = ws2.cell(row=r, column=3).value
-        req = ws2.cell(row=r, column=4).value
-        row_name = ws2.cell(row=r, column=5).value
+    for r in range(2, ws.max_row + 1):
+        detail = ws.cell(row=r, column=2).value
+        line = ws.cell(row=r, column=3).value
         if not detail or not line:
             continue
-        try:
-            req_int = int(req) if req is not None else 0
-        except (ValueError, TypeError):
-            req_int = 0
+        row_name = ws.cell(row=r, column=5).value
         details.append(LineDetail(
             detail=str(detail).strip(),
             line=str(line).strip(),
             row_name=str(row_name).strip() if row_name else str(detail).strip(),
-            persons_required=req_int,
+            persons_required=_coerce_int(ws.cell(row=r, column=4).value),
         ))
+    return details
+
+
+def parse_excel_bytes(content: bytes) -> Tuple[List[Person], List[LineDetail]]:
+    wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+    sheet_names = {s.lower(): s for s in wb.sheetnames}
+    persons_sheet = sheet_names.get("person - skill") or wb.sheetnames[0]
+    lines_sheet = sheet_names.get("assembly line") or wb.sheetnames[1]
+    persons = _parse_persons_sheet(wb[persons_sheet])
+    details = _parse_lines_sheet(wb[lines_sheet])
     return persons, details
 
 
@@ -236,6 +239,10 @@ def _generate_assignments(
     overrides: Dict[str, List[str]],
     unassigned_keys: List[str],
 ) -> List[CellAssignment]:
+    persons = persons or []
+    details = details or []
+    overrides = overrides or {}
+    unassigned_keys = unassigned_keys or []
     person_total_skills = {p["id"]: sum(1 for v in p.get("skills", {}).values() if v) for p in persons}
     person_by_id = {p["id"]: p for p in persons}
     absent_set = set(absent_ids)
@@ -298,7 +305,7 @@ def _generate_assignments(
         if remaining > 0:
             eligible = [
                 p for p in persons
-                if p.get("skills", {}).get(detail_name) is True
+                if bool(p.get("skills", {}).get(detail_name))
                 and p["id"] not in absent_set
                 and p["id"] not in assigned_person_ids
                 and p["id"] not in picks

@@ -1,0 +1,21 @@
+{
+  "summary": "Iteration 5 backend-only regression check for code-quality refactor (bool() truthy check, defensive default lists, parse_excel_bytes split into 3 helpers). All 9 requested checks pass. Behavior is identical to iteration 4: same counts (persons=76, details=72, lines=15), same schedule result for the standard configs (req=40, ass=38, short=2), same line_keys [X-Smart, X-Smart #2, E2, Spares], skill filter still bool-true only, no duplicate assignments across cells, specialist-first ordering preserved. Adjust set + clear work correctly. Upload-excel via refactored helpers returns persons=76 details=72. Export produces a valid xlsx with correct Content-Disposition and Content-Type. Analytics returns the expected 3-key shape. No errors in supervisor logs.",
+  "tested_scope": ["backend", "integration"],
+  "passed": [
+    "GET /api/stats -> persons=76 details=72 lines=15",
+    "GET /api/persons -> 76 records; every person.skills value is bool (truthy-check regression check passed)",
+    "GET /api/details -> 72 rows; row_name populated on all; persons_required is int on all",
+    "POST /api/schedule -> line_keys=[E2, Spares, X-Smart, X-Smart #2]; req=40 ass=38 short=2; 0 skill-mismatch assignments; 0 duplicate person across cells (matches iteration_4)",
+    "POST /api/schedule/{date}/adjust action=set -> swap person now only in target X-Smart p&c assembly (removed from Spares cell as expected)",
+    "POST /api/schedule/{date}/adjust action=clear -> target cell assigned_person_ids=[], shortage=2/required=2; cell stays unassigned after implicit regeneration",
+    "POST /api/upload-excel with /app/backend/seed_data.xlsx -> {persons:76, details:72}; stats confirm reseed OK via refactored _parse_persons_sheet / _parse_lines_sheet / _coerce_int",
+    "GET /api/export/{date}?shift=day -> 200, Content-Type application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, Content-Disposition attachment; filename=schedule-2026-01-15-day.xlsx; body is a valid xlsx zip (9 entries)",
+    "GET /api/analytics/shortage -> keys={top_short_details, top_short_lines, history}; sample history includes required/assigned/shortage per date",
+    "Supervisor backend logs: no new errors/exceptions/tracebacks during the run"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "not tested (backend-only request)"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}
