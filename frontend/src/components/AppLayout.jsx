@@ -1,22 +1,32 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
-import { Factory, LayoutGrid, Users, Upload, Monitor } from "lucide-react";
+import {
+    Factory,
+    LayoutGrid,
+    Users,
+    Upload,
+    Monitor,
+    BarChart3,
+    CalendarDays,
+} from "lucide-react";
 
 const navItems = [
     { to: "/", icon: LayoutGrid, label: "Setup", testid: "nav-setup" },
     { to: "/board", icon: Monitor, label: "Board", testid: "nav-board" },
+    { to: "/history", icon: CalendarDays, label: "History", testid: "nav-history" },
+    { to: "/analytics", icon: BarChart3, label: "Analytics", testid: "nav-analytics" },
     { to: "/persons", icon: Users, label: "Persons", testid: "nav-persons" },
     { to: "/upload", icon: Upload, label: "Upload", testid: "nav-upload" },
 ];
 
 export default function AppLayout() {
     return (
-        <div className="min-h-screen bg-[#0a0a0a] text-white flex">
+        <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col md:flex-row">
             <aside
-                className="w-56 shrink-0 border-r border-white/10 bg-[#0a0a0a] flex flex-col no-print"
+                className="w-full md:w-56 md:shrink-0 border-b md:border-b-0 md:border-r border-white/10 bg-[#0a0a0a] flex md:flex-col no-print overflow-x-auto md:overflow-visible"
                 data-testid="app-sidebar"
             >
-                <div className="px-6 py-7 border-b border-white/10">
+                <div className="px-6 py-5 md:py-7 border-r md:border-r-0 md:border-b border-white/10 shrink-0">
                     <div className="flex items-center gap-3">
                         <Factory className="w-6 h-6 text-[#007AFF]" strokeWidth={2.5} />
                         <div>
@@ -29,7 +39,7 @@ export default function AppLayout() {
                         </div>
                     </div>
                 </div>
-                <nav className="flex-1 py-4">
+                <nav className="flex md:flex-col md:py-4 md:flex-1">
                     {navItems.map(({ to, icon: Icon, label, testid }) => (
                         <NavLink
                             key={to}
@@ -37,10 +47,10 @@ export default function AppLayout() {
                             end={to === "/"}
                             data-testid={testid}
                             className={({ isActive }) =>
-                                `flex items-center gap-3 px-6 py-3 text-sm font-medium uppercase tracking-wider transition-colors border-l-2 ${
+                                `flex items-center gap-3 px-6 py-3 text-sm font-medium uppercase tracking-wider transition-colors md:border-l-2 border-b-2 md:border-b-0 whitespace-nowrap ${
                                     isActive
-                                        ? "border-[#007AFF] bg-white/5 text-white"
-                                        : "border-transparent text-zinc-400 hover:text-white hover:bg-white/5"
+                                        ? "md:border-l-[#007AFF] border-b-[#007AFF] bg-white/5 text-white"
+                                        : "md:border-l-transparent border-b-transparent text-zinc-400 hover:text-white hover:bg-white/5"
                                 }`
                             }
                         >
@@ -49,8 +59,8 @@ export default function AppLayout() {
                         </NavLink>
                     ))}
                 </nav>
-                <div className="px-6 py-4 border-t border-white/10 text-[10px] tracking-[0.2em] uppercase text-zinc-600">
-                    v1.0 · Control Room
+                <div className="hidden md:block px-6 py-4 border-t border-white/10 text-[10px] tracking-[0.2em] uppercase text-zinc-600">
+                    v2.0 · Control Room
                 </div>
             </aside>
             <main className="flex-1 min-w-0">

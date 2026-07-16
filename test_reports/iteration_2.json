@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 2 latency-sensitive smoke test for FFM Production Skill Matrix v2 (row_name/priority/run_count/absent/adjust/analytics/shift/export). All critical backend endpoints and frontend flows verified against the public preview URL.",
+  "tested_scope": ["backend", "frontend", "integration"],
+  "passed": [
+    "GET /api/stats -> persons=76, details=72, lines=15",
+    "GET /api/lines returns 15 lines AND row_names array of 16",
+    "GET /api/details returns 72 rows, all with non-empty row_name",
+    "POST /api/schedule with X-Smart(run 2) + E2 returns line_keys [E2, X-Smart, X-Smart #2] and ZERO person overlap between X-Smart and X-Smart #2",
+    "Priority ordering: with restricted pool (~10 persons), X-Smart pri=1 got 8 slots vs E2 pri=5 got 1 -> lower priority filled first",
+    "POST /api/schedule/{date}/adjust action=set with cell_key='p&c assembly||X-Smart' swaps persons and removes them from other cell (E2 pc lost the two swapped ids); overrides map populated",
+    "POST /api/schedule/{date}/adjust action=clear returns unassigned_keys=['sub assembly - 1||E2'] and that cell has empty assigned_person_ids",
+    "GET /api/analytics/shortage returns {top_short_details, top_short_lines, history} arrays populated",
+    "GET /api/schedule/{date}?shift=day and ?shift=evening return DIFFERENT document ids (upsert key includes shift)",
+    "GET /api/export/{date}?shift=day -> 200, content-type xlsx, filename 'schedule-2026-03-15-day.xlsx'",
+    "Frontend Setup: 15 line rows, testids line-priority/run-plus/minus/count/enable-<line> all present; setup-shift-select and setup-date-input present; generate-schedule-btn navigates to /board?date=...&shift=day",
+    "Frontend Board: col-header-X-Smart and col-header-'X-Smart #2' present, absent-row-label + absent-row-cell present, ROW NAME column on LEFT, run_count expansion visible (X-Smart, X-Smart #2, X-Smart #3)",
+    "Frontend Board: clicking populated cell opens edit-cell-dialog with 47 pick-cb-* checkboxes, edit-save-btn, edit-clear-btn, edit-cancel-btn all present",
+    "Frontend Board: tv-mode-btn, print-btn, export-xlsx-btn present; export href = /api/export/2026-03-20?shift=day (correct)",
+    "Frontend Analytics page loads and contains 'Shortage' section text",
+    "Frontend History page: history-prev-month, history-next-month present; 31 cal-cell-<iso> cells rendered",
+    "Zero console errors on frontend during navigation"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true,
+  "notes": [
+    "Adjust endpoint payload uses cell_key='row_name||line_key' + shift in JSON body (NOT query param). Frontend already uses this contract correctly.",
+    "setup-shift-select is a custom (non-native) select; native page.select_option() failed but the element exists and works via UI click. Not a bug.",
+    "Preview URL: https://resource-scheduler-8.preview.emergentagent.com"
+  ]
+}
