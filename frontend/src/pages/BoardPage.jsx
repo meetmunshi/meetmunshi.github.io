@@ -883,7 +883,7 @@ function SupportBlock({ item, onEdit }) {
                 return (
                     <button
                         type="button"
-                        key={a.line_key + "||" + a.row_name}
+                        key={a.line_key + "||" + a.row_name + "||" + a.detail}
                         onClick={() => onEdit(a)}
                         className={`w-full text-left mt-1.5 px-2 py-1.5 group ${
                             shortage
