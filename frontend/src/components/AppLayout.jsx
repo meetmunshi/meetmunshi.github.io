@@ -30,20 +30,20 @@ export default function AppLayout() {
                 className="w-full md:w-56 md:shrink-0 border-b md:border-b-0 md:border-r border-white/10 bg-[#0a0a0a] flex md:flex-col no-print overflow-x-auto md:overflow-visible"
                 data-testid="app-sidebar"
             >
-                <div className="px-5 py-4 md:py-5 border-r md:border-r-0 md:border-b border-white/10 shrink-0 bg-gradient-to-b from-[#0a2a5e] to-[#0a1a3e]">
+                <div className="px-5 py-4 md:py-6 border-r md:border-r-0 md:border-b border-white/10 shrink-0 bg-gradient-to-b from-[#0a2a5e] to-[#0a1a3e]">
                     <div className="flex items-center gap-3">
                         <img
                             src="/logo/ffm-logo.png"
                             alt="Fast & Fluid"
-                            className="h-10 w-auto"
+                            className="h-14 w-auto"
                             data-testid="brand-logo"
                         />
                         <div className="hidden md:block">
-                            <div className="text-[10px] tracking-[0.25em] uppercase text-white/70">
+                            <div className="text-xs tracking-[0.25em] uppercase text-white/85 font-bold">
                                 Scheduling
                             </div>
-                            <div className="text-[9px] tracking-[0.2em] uppercase text-white/40 mt-0.5">
-                                Control Room v2
+                            <div className="text-xs tracking-[0.2em] uppercase text-white/60 mt-0.5">
+                                Board
                             </div>
                         </div>
                     </div>

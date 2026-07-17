@@ -83,6 +83,9 @@ export default function SetupPage() {
                     return next;
                 });
                 setAbsentIds(new Set(sched.absent_person_ids || []));
+            } else {
+                // Fresh date — reset absentees so yesterday's list doesn't carry over
+                setAbsentIds(new Set());
             }
         });
     }, [date, shift]);
