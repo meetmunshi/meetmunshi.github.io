@@ -232,6 +232,63 @@ async def upload_excel(file: UploadFile = File(...)):
     return {"persons": len(persons), "details": len(details)}
 
 
+def _person_full_name(p: dict) -> str:
+    return f"{p.get('name','').strip()} {p.get('surname','').strip()}".strip()
+
+
+def _names_from_ids(ids: List[str], person_by_id: Dict[str, dict]) -> List[str]:
+    return [_person_full_name(person_by_id[pid]) for pid in ids if pid in person_by_id]
+
+
+def _apply_override_picks(
+    cell_key: str,
+    overrides: Dict[str, List[str]],
+    person_by_id: Dict[str, dict],
+    absent_set: set,
+) -> List[str]:
+    """Return picks locked in by user overrides for this cell (skips absent/unknown)."""
+    if cell_key not in overrides:
+        return []
+    return [
+        pid for pid in overrides[cell_key]
+        if pid in person_by_id and pid not in absent_set
+    ]
+
+
+def _select_eligible(
+    detail_name: str,
+    remaining: int,
+    persons: List[dict],
+    absent_set: set,
+    used_globally: set,
+    used_locally: List[str],
+    person_total_skills: Dict[str, int],
+) -> List[dict]:
+    """Return specialist-first eligible candidates for a cell."""
+    eligible = [
+        p for p in persons
+        if bool(p.get("skills", {}).get(detail_name))
+        and p["id"] not in absent_set
+        and p["id"] not in used_globally
+        and p["id"] not in used_locally
+    ]
+    eligible.sort(key=lambda p: (person_total_skills.get(p["id"], 0), p.get("name", "")))
+    return eligible[:remaining]
+
+
+def _build_work_items(
+    line_configs: List[LineConfig],
+    details_by_line: Dict[str, List[dict]],
+) -> List[Tuple[int, str, int, dict]]:
+    sorted_configs = sorted(line_configs, key=lambda c: (c.priority, c.line))
+    work: List[Tuple[int, str, int, dict]] = []
+    for cfg in sorted_configs:
+        for run_idx in range(1, max(1, cfg.run_count) + 1):
+            for d in details_by_line.get(cfg.line, []):
+                work.append((cfg.priority, cfg.line, run_idx, d))
+    return work
+
+
 def _generate_assignments(
     persons: List[dict],
     details: List[dict],
@@ -244,90 +301,50 @@ def _generate_assignments(
     details = details or []
     overrides = overrides or {}
     unassigned_keys = unassigned_keys or []
+
     person_total_skills = {p["id"]: sum(1 for v in p.get("skills", {}).values() if v) for p in persons}
     person_by_id = {p["id"]: p for p in persons}
     absent_set = set(absent_ids)
     unassigned_set = set(unassigned_keys)
 
-    # Sort configs by priority (ascending: 1 first)
-    sorted_configs = sorted(line_configs, key=lambda c: (c.priority, c.line))
     details_by_line: Dict[str, List[dict]] = defaultdict(list)
     for d in details:
         details_by_line[d["line"]].append(d)
 
-    # Build expanded work items: (priority, line, run, detail)
-    work: List[Tuple[int, str, int, dict]] = []
-    for cfg in sorted_configs:
-        for run_idx in range(1, max(1, cfg.run_count) + 1):
-            for d in details_by_line.get(cfg.line, []):
-                work.append((cfg.priority, cfg.line, run_idx, d))
+    work = _build_work_items(line_configs, details_by_line)
 
+    # Lock in override people up-front so auto-fill won't reuse them
     assigned_person_ids: set = set()
-    results: List[CellAssignment] = []
-
-    # First apply overrides — they lock those people
-    override_used: set = set()
-    for key, pids in overrides.items():
+    for pids in overrides.values():
         for pid in pids:
             if pid in person_by_id and pid not in absent_set:
-                override_used.add(pid)
-    assigned_person_ids.update(override_used)
+                assigned_person_ids.add(pid)
 
-    for priority, line, run_idx, d in work:
+    results: List[CellAssignment] = []
+    for _priority, line, run_idx, d in work:
         detail_name = d["detail"]
         row_name = d.get("row_name") or detail_name
         required = d["persons_required"]
         line_key = f"{line}" if run_idx == 1 else f"{line} #{run_idx}"
         cell_key = f"{row_name}||{line_key}"
 
-        picks: List[str] = []
-        if cell_key in overrides:
-            for pid in overrides[cell_key]:
-                if pid in person_by_id and pid not in absent_set:
-                    picks.append(pid)
-            # Allow user to intentionally exceed required (extra hands)
+        picks = _apply_override_picks(cell_key, overrides, person_by_id, absent_set)
 
-        if cell_key in unassigned_set:
-            # User explicitly cleared — do NOT auto-fill
-            names = []
-            for pid in picks:
-                p = person_by_id.get(pid)
-                if p:
-                    names.append(f"{p.get('name','').strip()} {p.get('surname','').strip()}".strip())
-            results.append(CellAssignment(
-                row_name=row_name, line=line, run=run_idx, line_key=line_key,
-                detail=detail_name, required=required,
-                assigned_person_ids=picks, assigned_person_names=names,
-                shortage=max(0, required - len(picks)),
-            ))
-            continue
+        if cell_key not in unassigned_set:
+            remaining = required - len(picks)
+            if remaining > 0:
+                extras = _select_eligible(
+                    detail_name, remaining, persons,
+                    absent_set, assigned_person_ids, picks, person_total_skills,
+                )
+                picks.extend(c["id"] for c in extras)
 
-        remaining = required - len(picks)
-        if remaining > 0:
-            eligible = [
-                p for p in persons
-                if bool(p.get("skills", {}).get(detail_name))
-                and p["id"] not in absent_set
-                and p["id"] not in assigned_person_ids
-                and p["id"] not in picks
-            ]
-            eligible.sort(key=lambda p: (person_total_skills.get(p["id"], 0), p.get("name", "")))
-            for cand in eligible[:remaining]:
-                picks.append(cand["id"])
-
-        for pid in picks:
-            assigned_person_ids.add(pid)
-
-        names = []
-        for pid in picks:
-            p = person_by_id.get(pid)
-            if p:
-                names.append(f"{p.get('name','').strip()} {p.get('surname','').strip()}".strip())
-
+        assigned_person_ids.update(picks)
         results.append(CellAssignment(
             row_name=row_name, line=line, run=run_idx, line_key=line_key,
             detail=detail_name, required=required,
-            assigned_person_ids=picks, assigned_person_names=names,
+            assigned_person_ids=picks,
+            assigned_person_names=_names_from_ids(picks, person_by_id),
             shortage=max(0, required - len(picks)),
         ))
 
@@ -366,73 +383,96 @@ class AutoPlanRequest(BaseModel):
     min_coverage: int = 80          # only include lines with at least this coverage %
 
 
+def _skill_totals(persons: List[dict]) -> Dict[str, int]:
+    return {p["id"]: sum(1 for v in p.get("skills", {}).values() if v) for p in persons}
+
+
+def _group_details_by_line(details: List[dict]) -> Dict[str, List[dict]]:
+    grouped: Dict[str, List[dict]] = defaultdict(list)
+    for d in details:
+        grouped[d["line"]].append(d)
+    return grouped
+
+
+def _pick_specialists(
+    detail_name: str,
+    limit: int,
+    persons: List[dict],
+    skill_totals: Dict[str, int],
+    excluded_ids: set,
+) -> List[dict]:
+    """Return up to `limit` skilled candidates, specialist-first, excluding used/absent."""
+    eligible = [
+        p for p in persons
+        if bool(p.get("skills", {}).get(detail_name)) and p["id"] not in excluded_ids
+    ]
+    eligible.sort(key=lambda p: (skill_totals.get(p["id"], 0), p.get("name", "")))
+    return eligible[:limit]
+
+
+def _simulate_line_fill(
+    line_details: List[dict],
+    persons: List[dict],
+    skill_totals: Dict[str, int],
+    absent_set: set,
+    reserved: set,
+) -> Tuple[int, int, set, List[dict]]:
+    """Simulate assigning `line_details` from the free pool.
+    Returns (total_required, total_filled, used_ids, per_detail_reports)."""
+    line_used: set = set()
+    total_req = 0
+    total_fill = 0
+    reports: List[dict] = []
+    for d in line_details:
+        excluded = absent_set | reserved | line_used
+        picks = _pick_specialists(d["detail"], d["persons_required"], persons, skill_totals, excluded)
+        for c in picks:
+            line_used.add(c["id"])
+        total_req += d["persons_required"]
+        total_fill += len(picks)
+        reports.append({"detail": d, "picks": picks})
+    return total_req, total_fill, line_used, reports
+
+
 @api_router.post("/schedule/auto-plan", response_model=Schedule)
 async def auto_plan(req: AutoPlanRequest):
-    """Given absentees, greedily pick lines that maximize headcount utilization.
-    Adds lines one at a time (each at 100%..min_coverage) until no more can be added."""
+    """Given absentees, greedily pick lines that maximize headcount utilization."""
     persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
     details = await db.line_details.find({}, {"_id": 0}).to_list(1000)
     if not persons or not details:
         raise HTTPException(400, "No data seeded.")
 
     absent_set = set(req.absent_person_ids)
-    person_total_skills = {p["id"]: sum(1 for v in p.get("skills", {}).values() if v) for p in persons}
-    details_by_line: Dict[str, List[dict]] = defaultdict(list)
-    for d in details:
-        details_by_line[d["line"]].append(d)
+    skill_totals = _skill_totals(persons)
+    details_by_line = _group_details_by_line(details)
     all_lines = list(details_by_line.keys())
 
     selected: List[str] = []
     used: set = set()
 
-    def score(line: str) -> Tuple[int, int]:
-        """Return (coverage_pct, fillable) for adding this line right now."""
-        line_used: set = set()
-        total_req = 0
-        total_fill = 0
-        for d in details_by_line[line]:
-            eligible = [
-                p for p in persons
-                if bool(p.get("skills", {}).get(d["detail"]))
-                and p["id"] not in absent_set
-                and p["id"] not in used
-                and p["id"] not in line_used
-            ]
-            eligible.sort(key=lambda p: (person_total_skills.get(p["id"], 0), p.get("name", "")))
-            picks = eligible[: d["persons_required"]]
-            for p in picks:
-                line_used.add(p["id"])
-            total_req += d["persons_required"]
-            total_fill += len(picks)
+    def score(line: str) -> Tuple[int, int, set]:
+        total_req, total_fill, line_used, _ = _simulate_line_fill(
+            details_by_line[line], persons, skill_totals, absent_set, used,
+        )
         pct = 100 if total_req == 0 else round(total_fill * 100 / total_req)
-        return pct, total_fill
+        return pct, total_fill, line_used
 
     while True:
-        candidates = [l for l in all_lines if l not in selected]
         best = None
         best_score = (-1, -1)
-        for l in candidates:
-            s = score(l)
-            if s[0] >= req.min_coverage and s > best_score:
-                best_score = s
-                best = l
+        best_used: set = set()
+        for line in all_lines:
+            if line in selected:
+                continue
+            pct, fill, line_used = score(line)
+            if pct >= req.min_coverage and (pct, fill) > best_score:
+                best_score = (pct, fill)
+                best = line
+                best_used = line_used
         if not best:
             break
-        # Commit this line: reserve the people it would use
         selected.append(best)
-        line_used: set = set()
-        for d in details_by_line[best]:
-            eligible = [
-                p for p in persons
-                if bool(p.get("skills", {}).get(d["detail"]))
-                and p["id"] not in absent_set
-                and p["id"] not in used
-                and p["id"] not in line_used
-            ]
-            eligible.sort(key=lambda p: (person_total_skills.get(p["id"], 0), p.get("name", "")))
-            for c in eligible[: d["persons_required"]]:
-                line_used.add(c["id"])
-        used.update(line_used)
+        used.update(best_used)
 
     if not selected:
         raise HTTPException(400, "Could not auto-plan any line with the current headcount.")
@@ -447,6 +487,44 @@ async def auto_plan(req: AutoPlanRequest):
     return await generate_schedule(gen_req)
 
 
+def _collect_used_person_ids(sched_doc: dict) -> set:
+    used: set = set()
+    for a in sched_doc["assignments"]:
+        for pid in a["assigned_person_ids"]:
+            used.add(pid)
+    return used
+
+
+def _build_suggestion(
+    line: str, dets: List[dict], persons: List[dict],
+    skill_totals: Dict[str, int], absent_set: set, used_globally: set,
+) -> dict:
+    total_req, total_filled, _, reports = _simulate_line_fill(
+        dets, persons, skill_totals, absent_set, used_globally,
+    )
+    cell_reports = []
+    for r in reports:
+        d = r["detail"]
+        picks = r["picks"]
+        cell_reports.append({
+            "row_name": d.get("row_name") or d["detail"],
+            "detail": d["detail"],
+            "required": d["persons_required"],
+            "eligible": len(picks),
+            "assigned_names": [_person_full_name(p) for p in picks],
+            "shortage": max(0, d["persons_required"] - len(picks)),
+        })
+    coverage = 1.0 if total_req == 0 else total_filled / total_req
+    return {
+        "line": line,
+        "required": total_req,
+        "fillable": total_filled,
+        "coverage_pct": round(coverage * 100),
+        "fully_covered": total_filled == total_req and total_req > 0,
+        "cells": cell_reports,
+    }
+
+
 @api_router.get("/schedule/{date}/suggest-lines")
 async def suggest_lines(date: str, shift: str = "day"):
     """Using the free pool (unassigned + not absent), suggest additional lines that could run today."""
@@ -457,57 +535,18 @@ async def suggest_lines(date: str, shift: str = "day"):
     persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
     details = await db.line_details.find({}, {"_id": 0}).to_list(1000)
     absent_set = set(sched_doc.get("absent_person_ids", []))
-    used: set = set()
-    for a in sched_doc["assignments"]:
-        for pid in a["assigned_person_ids"]:
-            used.add(pid)
+    used = _collect_used_person_ids(sched_doc)
 
     active_lines = {c["line"] for c in sched_doc["line_configs"]}
     free_pool = [p for p in persons if p["id"] not in absent_set and p["id"] not in used]
-    person_total_skills = {p["id"]: sum(1 for v in p.get("skills", {}).values() if v) for p in persons}
+    skill_totals = _skill_totals(persons)
 
-    # Group details by line for candidate lines only
-    details_by_line: Dict[str, List[dict]] = defaultdict(list)
-    for d in details:
-        if d["line"] not in active_lines:
-            details_by_line[d["line"]].append(d)
-
-    suggestions = []
-    for line, dets in details_by_line.items():
-        line_used: set = set()
-        cell_reports = []
-        total_req = 0
-        total_filled = 0
-        for d in dets:
-            eligible = [
-                p for p in free_pool
-                if bool(p.get("skills", {}).get(d["detail"]))
-                and p["id"] not in line_used
-            ]
-            eligible.sort(key=lambda p: (person_total_skills.get(p["id"], 0), p.get("name", "")))
-            picks = eligible[: d["persons_required"]]
-            for p in picks:
-                line_used.add(p["id"])
-            total_req += d["persons_required"]
-            total_filled += len(picks)
-            cell_reports.append({
-                "row_name": d.get("row_name") or d["detail"],
-                "detail": d["detail"],
-                "required": d["persons_required"],
-                "eligible": len(eligible),
-                "assigned_names": [f"{p['name']} {p.get('surname','')}".strip() for p in picks],
-                "shortage": max(0, d["persons_required"] - len(picks)),
-            })
-        coverage = 1.0 if total_req == 0 else total_filled / total_req
-        suggestions.append({
-            "line": line,
-            "required": total_req,
-            "fillable": total_filled,
-            "coverage_pct": round(coverage * 100),
-            "fully_covered": total_filled == total_req and total_req > 0,
-            "cells": cell_reports,
-        })
-
+    # Candidate lines = not active
+    details_by_line = _group_details_by_line([d for d in details if d["line"] not in active_lines])
+    suggestions = [
+        _build_suggestion(line, dets, persons, skill_totals, absent_set, used)
+        for line, dets in details_by_line.items()
+    ]
     suggestions.sort(key=lambda s: (-s["coverage_pct"], -s["fillable"], s["line"]))
     return {"free_pool_size": len(free_pool), "suggestions": suggestions}
 
@@ -520,49 +559,34 @@ async def fill_shortages(date: str, shift: str = "day"):
         raise HTTPException(404, "Schedule not found")
 
     persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
-    person_by_id = {p["id"]: p for p in persons}
-    person_total_skills = {p["id"]: sum(1 for v in p.get("skills", {}).values() if v) for p in persons}
+    skill_totals = _skill_totals(persons)
     absent_set = set(sched_doc.get("absent_person_ids", []))
-
-    # Currently-assigned person ids across the schedule
-    used: set = set()
-    for a in sched_doc["assignments"]:
-        for pid in a["assigned_person_ids"]:
-            used.add(pid)
+    used = _collect_used_person_ids(sched_doc)
 
     overrides = dict(sched_doc.get("overrides", {}) or {})
     unassigned = set(sched_doc.get("unassigned_keys", []) or [])
-    filled = 0
 
-    # Sort shortage cells: hardest to fill first (lowest count of skilled free candidates)
-    shortage_cells = [a for a in sched_doc["assignments"] if a["shortage"] > 0]
-    def scarcity(cell):
+    def scarcity(cell: dict) -> int:
         return sum(
             1 for p in persons
-            if bool(p.get("skills", {}).get(cell["detail"]))
-            and p["id"] not in absent_set
+            if bool(p.get("skills", {}).get(cell["detail"])) and p["id"] not in absent_set
         )
-    shortage_cells.sort(key=scarcity)
+
+    shortage_cells = sorted(
+        [a for a in sched_doc["assignments"] if a["shortage"] > 0],
+        key=scarcity,
+    )
 
     for cell in shortage_cells:
-        need = cell["shortage"]
         cell_key = f"{cell['row_name']}||{cell['line_key']}"
-        eligible = [
-            p for p in persons
-            if bool(p.get("skills", {}).get(cell["detail"]))
-            and p["id"] not in absent_set
-            and p["id"] not in used
-        ]
-        # Prefer specialists (fewer skills) so generalists remain for other cells
-        eligible.sort(key=lambda p: (person_total_skills.get(p["id"], 0), p.get("name", "")))
-        picks_new_ids = [c["id"] for c in eligible[:need]]
-        picks_existing = cell["assigned_person_ids"] + picks_new_ids
-        if picks_new_ids:
-            overrides[cell_key] = picks_existing
-            unassigned.discard(cell_key)
-            for pid in picks_new_ids:
-                used.add(pid)
-            filled += len(picks_new_ids)
+        excluded = absent_set | used
+        new_picks = _pick_specialists(cell["detail"], cell["shortage"], persons, skill_totals, excluded)
+        new_ids = [p["id"] for p in new_picks]
+        if not new_ids:
+            continue
+        overrides[cell_key] = cell["assigned_person_ids"] + new_ids
+        unassigned.discard(cell_key)
+        used.update(new_ids)
 
     req = ScheduleRequest(
         date=date, shift=shift,
@@ -571,8 +595,7 @@ async def fill_shortages(date: str, shift: str = "day"):
         overrides=overrides,
         unassigned_keys=list(unassigned),
     )
-    result = await generate_schedule(req)
-    return result
+    return await generate_schedule(req)
 
 
 @api_router.post("/schedule/{date}/adjust")
