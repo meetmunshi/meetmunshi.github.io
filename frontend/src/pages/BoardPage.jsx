@@ -14,6 +14,7 @@ import {
     DialogContent,
     DialogHeader,
     DialogTitle,
+    DialogDescription,
     DialogFooter,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -541,10 +542,10 @@ export default function BoardPage() {
                         <DialogTitle className="font-chivo uppercase tracking-tight">
                             Adjust · {editCell?.row_name} × {editCell?.line_key}
                         </DialogTitle>
-                        <div className="text-xs text-zinc-500">
+                        <DialogDescription className="text-xs text-zinc-500">
                             Skill required: <span className="text-zinc-300">{editCell?.detail}</span> ·{" "}
                             Required: {editCell?.required}
-                        </div>
+                        </DialogDescription>
                     </DialogHeader>
                     {editCell && (
                         <PersonPicker
