@@ -1,0 +1,26 @@
+{
+  "summary": "Iteration 6 both-side testing: 12/12 backend pytests pass, all frontend UX changes verified. GET /api/persons returns 76 sorted alphabetically (Aarsh Patel first, Yuvraj Magharola last). Override no longer capped at required — required=1 cell accepts 3 picks (shortage=0, all 3 names returned) and the same holds when passed via POST /api/schedule directly (persists after regenerate). Board UI: 'Unassigned' chip present, value equals rendered chip count (38 initially), alphabetical, both testids unassigned-row-label + unassigned-row-cell + unassigned-chip-<id> render. Edit dialog shows FREE green badges and 'Currently on:' amber busy text. Picking 4 people for a required=2 cell shows '(+4 EXTRA HANDS)' label; save persists (assigned=42, unassigned decrements 38→34). Setup Mark Absent list is alphabetical (Aarsh Patel first) with no SN prefix.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": [
+    {"screen": "BoardPage edit dialog", "issues": ["Dev-only console warning: 'Missing Description or aria-describedby={undefined} for DialogContent'. Minor a11y warning — non-blocking."]}
+  ]},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iter6_backend.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py list_persons sort correctly uses lowercased name+surname — matches spec.",
+    "_generate_assignments no longer caps picks[:required] — extra hands preserved end-to-end (adjust and direct schedule POST).",
+    "BoardPage.jsx unassignedPersons useMemo depends on [schedule, personById, persons] and is correct; sorted alphabetically.",
+    "Optional: DialogContent could add a <DialogDescription> or aria-describedby to silence Radix a11y warning."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% (all iteration-6 UX checks pass)"},
+  "seed_data_creation": "None; used existing standard config date=2026-07-16 shift=day. Schedule left in clean state (req=40 ass=38 short=2) after regen at end of testing.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "backend_test.py exists at /app/backend/tests/backend_test.py (pytest, loads REACT_APP_BACKEND_URL from frontend/.env). Run with: `pytest /app/backend/tests/backend_test.py -o addopts= -v`. Standard test config: date=2026-07-16 shift=day, X-Smart p=1 rc=2 / E2 p=2 rc=1 / Spares p=3 rc=1 → req=40 ass=38 short=2. Verified data-testids: chip-unassigned, unassigned-row-label, unassigned-row-cell, unassigned-chip-<personId>, pick-cb-<id>, edit-save-btn, edit-cell-dialog. Note: after any test that adds extra hands via adjust, POST /api/schedule with empty overrides to reset before further assertions on unassigned count."
+}

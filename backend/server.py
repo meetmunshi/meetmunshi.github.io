@@ -183,6 +183,7 @@ async def root():
 @api_router.get("/persons", response_model=List[Person])
 async def list_persons():
     docs = await db.persons.find({}, {"_id": 0}).to_list(1000)
+    docs.sort(key=lambda p: (p.get("name", "").lower(), p.get("surname", "").lower()))
     return [Person(**d) for d in docs]
 
 
@@ -284,7 +285,7 @@ def _generate_assignments(
             for pid in overrides[cell_key]:
                 if pid in person_by_id and pid not in absent_set:
                     picks.append(pid)
-            picks = picks[:required]
+            # Allow user to intentionally exceed required (extra hands)
 
         if cell_key in unassigned_set:
             # User explicitly cleared — do NOT auto-fill

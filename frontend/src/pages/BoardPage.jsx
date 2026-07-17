@@ -28,6 +28,7 @@ import {
     RotateCcw,
     RefreshCw,
     Camera,
+    UserPlus,
 } from "lucide-react";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -117,8 +118,8 @@ export default function BoardPage() {
         return m;
     }, [persons]);
 
-    const { rowNames, colKeys, matrix, summary, absentPersons, supportItems, plannedLines } = useMemo(() => {
-        if (!schedule) return { rowNames: [], colKeys: [], matrix: {}, summary: null, absentPersons: [], supportItems: [], plannedLines: new Set() };
+    const { rowNames, colKeys, matrix, summary, absentPersons, supportItems, plannedLines, unassignedPersons } = useMemo(() => {
+        if (!schedule) return { rowNames: [], colKeys: [], matrix: {}, summary: null, absentPersons: [], supportItems: [], plannedLines: new Set(), unassignedPersons: [] };
         const cols = [];
         const seenCol = new Set();
         const planned = new Set();
@@ -170,8 +171,20 @@ export default function BoardPage() {
             absentPersons: abs,
             supportItems: supp,
             plannedLines: planned,
+            unassignedPersons: (() => {
+                const absentSet = new Set(schedule.absent_person_ids || []);
+                const assigned = new Set();
+                (schedule.assignments || []).forEach((a) =>
+                    a.assigned_person_ids.forEach((id) => assigned.add(id)),
+                );
+                return persons
+                    .filter((p) => !absentSet.has(p.id) && !assigned.has(p.id))
+                    .sort((a, b) =>
+                        `${a.name} ${a.surname}`.localeCompare(`${b.name} ${b.surname}`),
+                    );
+            })(),
         };
-    }, [schedule, personById]);
+    }, [schedule, personById, persons]);
 
     // Map: person_id -> list of {row_name, line_key} they're currently assigned to
     const personLocations = useMemo(() => {
@@ -326,6 +339,7 @@ export default function BoardPage() {
                     accent={summary.shortage > 0 ? "alert" : "ok"}
                 />
                 <Chip label="Absent" value={absentPersons.length} accent={absentPersons.length > 0 ? "alert" : "ok"} />
+                <Chip label="Unassigned" value={unassignedPersons.length} accent={unassignedPersons.length > 0 ? "warn" : "ok"} />
             </div>
 
             {summary.shortage > 0 && (
@@ -473,6 +487,46 @@ export default function BoardPage() {
                                 )}
                             </td>
                         </tr>
+                        {/* Unassigned pool row */}
+                        <tr>
+                            <th
+                                className="sticky left-0 bg-amber-950/40 z-10 grid-cell px-4 py-3 text-left text-sm font-bold text-amber-300 uppercase tracking-widest"
+                                data-testid="unassigned-row-label"
+                            >
+                                <div className="flex flex-col">
+                                    <div className="flex items-center gap-2">
+                                        <UserPlus className="w-4 h-4" /> Unassigned
+                                    </div>
+                                    <div className="text-[9px] font-normal normal-case text-amber-400/70 tracking-normal mt-1">
+                                        Free pool · click any cell to add
+                                    </div>
+                                </div>
+                            </th>
+                            <td
+                                colSpan={colKeys.length + 1}
+                                className="grid-cell px-3 py-3 bg-amber-950/20"
+                                data-testid="unassigned-row-cell"
+                            >
+                                {unassignedPersons.length === 0 ? (
+                                    <span className="text-zinc-500 text-sm italic">
+                                        Everyone is allocated
+                                    </span>
+                                ) : (
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {unassignedPersons.map((p) => (
+                                            <span
+                                                key={p.id}
+                                                data-testid={`unassigned-chip-${p.id}`}
+                                                className="inline-flex items-center border border-amber-500/40 bg-amber-500/10 text-amber-200 text-xs px-2 py-1 font-medium"
+                                                title={`${Object.values(p.skills || {}).filter(Boolean).length} skills`}
+                                            >
+                                                {p.name} {p.surname}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                            </td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
@@ -546,7 +600,12 @@ function PersonPicker({
                 className="w-full bg-[#0a0a0a] border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#007AFF]"
             />
             <div className="text-[10px] uppercase tracking-widest text-zinc-500">
-                Picked {picks.size}/{required} · {eligible.length} eligible
+                Picked {picks.size} · Required {required} · {eligible.length} eligible
+                {picks.size > required && (
+                    <span className="ml-2 text-emerald-400">
+                        (+{picks.size - required} extra hand{picks.size - required > 1 ? "s" : ""})
+                    </span>
+                )}
             </div>
             <div className="max-h-72 overflow-y-auto border border-white/10">
                 {eligible.length === 0 && (
@@ -560,11 +619,14 @@ function PersonPicker({
                         (l) => `${l.row_name}||${l.line_key}` !== currentCellKey,
                     );
                     const busy = locs.length > 0;
+                    const free = !busy;
                     return (
                         <label
                             key={p.id}
                             className={`flex items-center gap-3 px-3 py-2 border-b border-white/5 cursor-pointer ${
-                                checked ? "bg-[#007AFF]/15" : busy ? "bg-amber-500/5" : "hover:bg-white/5"
+                                checked ? "bg-[#007AFF]/15"
+                                    : busy ? "bg-amber-500/5"
+                                    : "bg-emerald-500/5 hover:bg-emerald-500/10"
                             }`}
                             data-testid={`pick-row-${p.id}`}
                         >
@@ -575,7 +637,14 @@ function PersonPicker({
                                 className="border-white/20 data-[state=checked]:bg-[#007AFF] rounded-none mt-0.5"
                             />
                             <div className="flex-1 min-w-0">
-                                <div className="text-sm">{p.name} {p.surname}</div>
+                                <div className="text-sm flex items-center gap-2">
+                                    {p.name} {p.surname}
+                                    {free && (
+                                        <span className="text-[9px] uppercase tracking-widest text-emerald-400 font-bold">
+                                            free
+                                        </span>
+                                    )}
+                                </div>
                                 {busy && (
                                     <div className="text-[10px] text-amber-400 mt-0.5">
                                         Currently on:{" "}

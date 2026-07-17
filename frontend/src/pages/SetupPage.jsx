@@ -343,7 +343,6 @@ export default function SetupPage() {
                                                 checked ? "line-through text-red-300" : "text-zinc-200"
                                             }`}
                                         >
-                                            {p.sn ? `${p.sn}. ` : ""}
                                             {p.name} {p.surname}
                                         </span>
                                         <Badge
