@@ -92,13 +92,13 @@ export default function HistoryPage() {
                                 to={`/board?date=${c.iso}&shift=${c.schedules[0]?.shift || "day"}`}
                                 data-testid={`cal-cell-${c.iso}`}
                                 className={`min-h-24 border-r border-b border-white/5 p-2 hover:bg-white/5 transition ${
-                                    has ? "bg-[#007AFF]/5" : "bg-[#0a0a0a]"
+                                    has ? "bg-[#3B6AB8]/5" : "bg-[#0a0a0a]"
                                 }`}
                             >
                                 <div className="flex items-center justify-between mb-1">
                                     <span className="font-mono-ibm text-sm text-zinc-300">{c.d}</span>
                                     {has && (
-                                        <CalendarDays className="w-3 h-3 text-[#007AFF]" />
+                                        <CalendarDays className="w-3 h-3 text-[#3B6AB8]" />
                                     )}
                                 </div>
                                 {c.schedules.map((s) => (
@@ -106,7 +106,7 @@ export default function HistoryPage() {
                                         key={s.shift}
                                         className="text-[10px] uppercase tracking-widest text-zinc-400 mb-0.5"
                                     >
-                                        <span className="text-[#007AFF]">{s.shift}</span>
+                                        <span className="text-[#3B6AB8]">{s.shift}</span>
                                         {s.total_shortage > 0 && (
                                             <span className="ml-1 text-red-400">−{s.total_shortage}</span>
                                         )}

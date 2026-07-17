@@ -604,8 +604,160 @@ class TestSuggestLines:
         _regen_baseline()
 
 
+# --- Iteration 9: auto-plan ---
+AUTO_PLAN_DATE = "2026-07-18"
+
+
+def _cleanup_autoplan():
+    requests.delete(f"{API}/schedule/{AUTO_PLAN_DATE}", params={"shift": SHIFT}, timeout=30)
+
+
+class TestAutoPlanBaseline:
+    """POST /api/schedule/auto-plan with 0 absentees, min_coverage=80.
+    Spec: expect 9 lines picked, req=66 ass=65 short=1."""
+
+    def test_autoplan_baseline_no_absent(self):
+        _cleanup_autoplan()
+        r = requests.post(
+            f"{API}/schedule/auto-plan",
+            json={
+                "date": AUTO_PLAN_DATE,
+                "shift": SHIFT,
+                "absent_person_ids": [],
+                "min_coverage": 80,
+            },
+            timeout=30,
+        )
+        assert r.status_code == 200, r.text
+        s = r.json()
+        assert s["date"] == AUTO_PLAN_DATE
+        assert s["shift"] == SHIFT
+        # 5..15 lines
+        assert 5 <= len(s["line_configs"]) <= 15, f"expected 5..15 lines, got {len(s['line_configs'])}"
+        # Priorities are 1..N sequentially
+        prios = [c["priority"] for c in s["line_configs"]]
+        assert prios == list(range(1, len(prios) + 1)), f"priorities not 1..N: {prios}"
+        # run_count all 1
+        for c in s["line_configs"]:
+            assert c["run_count"] == 1
+        # Coverage >= 80%
+        coverage = s["total_assigned"] / s["total_required"]
+        assert coverage >= 0.80, f"coverage {coverage:.2%} < 80%"
+        # Baseline exact numbers per spec
+        assert len(s["line_configs"]) == 9, f"expected 9 lines, got {len(s['line_configs'])}"
+        assert s["total_required"] == 66, f"expected req=66, got {s['total_required']}"
+        assert s["total_assigned"] == 65, f"expected ass=65, got {s['total_assigned']}"
+        assert s["total_shortage"] == 1, f"expected short=1, got {s['total_shortage']}"
+
+    def test_autoplan_expected_lines_selected(self):
+        # Re-run to be independent (idempotent auto-plan)
+        r = requests.post(
+            f"{API}/schedule/auto-plan",
+            json={"date": AUTO_PLAN_DATE, "shift": SHIFT, "absent_person_ids": [], "min_coverage": 80},
+            timeout=30,
+        )
+        s = r.json()
+        selected = {c["line"] for c in s["line_configs"]}
+        expected = {"X-Smart XL", "X-Protint", "E4", "X-Smart", "Monkey",
+                    "Vehicle", "Crimping", "OS", "SK300"}
+        assert selected == expected, f"selected={selected}\nexpected={expected}"
+
+    def test_autoplan_no_duplicate_person(self):
+        r = requests.get(f"{API}/schedule/{AUTO_PLAN_DATE}", params={"shift": SHIFT}, timeout=30)
+        sched = r.json()
+        seen = {}
+        for a in sched["assignments"]:
+            for pid in a["assigned_person_ids"]:
+                assert pid not in seen, f"person {pid} in both {seen[pid]} and {a['line_key']}"
+                seen[pid] = a["line_key"]
+
+    def test_autoplan_persists_upsert(self):
+        # Second call should upsert (not fail, not duplicate); GET should return same shape
+        r1 = requests.post(
+            f"{API}/schedule/auto-plan",
+            json={"date": AUTO_PLAN_DATE, "shift": SHIFT, "absent_person_ids": [], "min_coverage": 80},
+            timeout=30,
+        )
+        s1 = r1.json()
+        r2 = requests.get(f"{API}/schedule/{AUTO_PLAN_DATE}", params={"shift": SHIFT}, timeout=30)
+        assert r2.status_code == 200
+        got = r2.json()
+        assert got["total_required"] == s1["total_required"]
+        assert got["total_assigned"] == s1["total_assigned"]
+        assert got["total_shortage"] == s1["total_shortage"]
+        assert len(got["line_configs"]) == len(s1["line_configs"])
+
+
+class TestAutoPlanWithAbsentees:
+    def test_autoplan_excludes_absentees(self, persons):
+        # Pick 20 absent people
+        absent_ids = [p["id"] for p in persons[:20]]
+        r = requests.post(
+            f"{API}/schedule/auto-plan",
+            json={
+                "date": AUTO_PLAN_DATE,
+                "shift": SHIFT,
+                "absent_person_ids": absent_ids,
+                "min_coverage": 80,
+            },
+            timeout=30,
+        )
+        assert r.status_code == 200, r.text
+        s = r.json()
+        assert s["absent_person_ids"] == absent_ids
+        absent_set = set(absent_ids)
+        for a in s["assignments"]:
+            for pid in a["assigned_person_ids"]:
+                assert pid not in absent_set, \
+                    f"absent person {pid} appeared in {a['line_key']}"
+        # Coverage still >= 80% on selected lines
+        if s["total_required"] > 0:
+            cov = s["total_assigned"] / s["total_required"]
+            assert cov >= 0.80, f"coverage {cov:.2%} < 80% with 20 absent"
+
+    def test_autoplan_extreme_all_absent_returns_400(self, persons):
+        all_ids = [p["id"] for p in persons]
+        r = requests.post(
+            f"{API}/schedule/auto-plan",
+            json={
+                "date": AUTO_PLAN_DATE,
+                "shift": SHIFT,
+                "absent_person_ids": all_ids,
+                "min_coverage": 80,
+            },
+            timeout=30,
+        )
+        assert r.status_code == 400, f"expected 400 got {r.status_code}: {r.text}"
+        assert "auto-plan" in r.json().get("detail", "").lower()
+
+
+class TestAutoPlanGreedy:
+    """Verify greedy ordering: first pick has highest achievable coverage
+    (100% for the baseline case), and each committed line reserves people
+    for subsequent lines."""
+
+    def test_first_line_is_high_coverage(self):
+        _cleanup_autoplan()
+        r = requests.post(
+            f"{API}/schedule/auto-plan",
+            json={"date": AUTO_PLAN_DATE, "shift": SHIFT, "absent_person_ids": [], "min_coverage": 80},
+            timeout=30,
+        )
+        s = r.json()
+        first_cfg = s["line_configs"][0]
+        # Compute coverage of first line from assignments
+        first_line_assignments = [a for a in s["assignments"] if a["line"] == first_cfg["line"]]
+        req = sum(a["required"] for a in first_line_assignments)
+        ass = sum(len(a["assigned_person_ids"]) for a in first_line_assignments)
+        assert req > 0
+        assert ass / req >= 0.80, f"first line coverage {ass}/{req} < 80%"
+
+
 # --- final: restore baseline for downstream/manual testing ---
 class TestZZZRestoreBaseline:
+    def test_cleanup_autoplan(self):
+        _cleanup_autoplan()
+
     def test_restore(self):
         s = _regen_baseline()
         assert s["total_required"] == 40

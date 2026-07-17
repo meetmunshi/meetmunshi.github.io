@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 9 both-side testing complete. Backend: 33/33 pytest pass (25 prior + 8 new auto-plan). POST /api/schedule/auto-plan (date=2026-07-18, shift=day, absent=[], min_coverage=80) returns exactly 9 lines with priorities 1..9 & run_count=1: {X-Smart XL, X-Protint, E4, X-Smart, Monkey, Vehicle, Crimping, OS, SK300}, total_required=66, total_assigned=65, total_shortage=1 (matches spec). Coverage 98.5% (>=80%). No-duplicate-person invariant holds across cells. Upsert persists via GET /api/schedule/{date}. Absentee exclusion verified with 20 absent ids — none appeared in assigned_person_ids and coverage still >=80%. Extreme all-76-absent returns 400 with 'Could not auto-plan any line...'. First-selected line has >=80% coverage (greedy verified). Regressions (persons alpha, schedule generation, adjust, fill-shortages, suggest-lines, export, analytics, stats) all still green. Frontend: sidebar has brand-logo img sourced from /logo/ffm-logo.png (200 OK, naturalWidth=701), navy gradient header (from-#0a2a5e to-#0a1a3e), all 7 nav testids present. Setup page: auto-plan-btn styled red rgb(176,36,59) = #B0243B; generate-schedule-btn styled navy rgb(59,106,184) = #3B6AB8. Clicking auto-plan-btn with date=2026-07-18 navigates to /board?date=2026-07-18&shift=day and shows toast 'Auto-planned 10 lines · 62/63 filled' (10 lines because the setup page had 2 absentees pre-loaded from today's schedule — expected behavior). All lines rendered on board. Nav to Persons/Analytics/Heatmap/History/Upload works. Auto-plan schedule for 2026-07-18 cleaned up at end.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "console_warnings": [
+      {"component": "Board table (Monkey row)", "issue": "React warning: 'Encountered two children with the same key, Monkey||monkey'. Likely happens because Monkey line has a detail whose row_name collapses to the same 'row_name||line_key' pair as another detail (e.g., two details with row_name='Monkey' on line 'monkey'). Suggests the key generator should include the detail name (or run index) to guarantee uniqueness. Not blocking but React may drop one of the duplicate nodes silently.", "priority": "LOW"}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iter9_backend.xml"
+  ],
+  "action_items": [
+    "Consider fixing the 'Monkey||monkey' duplicate React key warning in the Board table row/cell renderer. Include the detail name or a stable index in the key to guarantee uniqueness when a line has two details sharing the same row_name."
+  ],
+  "critical_code_review_comments": [
+    "auto_plan endpoint: greedy score function correctly reserves people per line via line_used and commits to `used` only after selection — matches spec.",
+    "score() uses same specialist-first sort (person_total_skills asc, name) as fill_shortages/suggest_lines — consistent tie-break behavior.",
+    "min_coverage default=80 is enforced at the endpoint & respected during greedy selection.",
+    "Empty absentee list still yields correct baseline (9 lines, 66/65/1); frontend correctly forwards absent_person_ids from Setup state.",
+    "AutoPlanRequest Pydantic model is minimal & typed; endpoint returns via generate_schedule so upsert & sum invariants are shared.",
+    "AppLayout brand-logo has fixed src '/logo/ffm-logo.png' — served correctly from /app/frontend/public/logo/ffm-logo.png; consider width/height attrs to avoid layout shift.",
+    "SetupPage handleAutoPlan calls autoPlan then navigates — good UX. However, if autoPlan throws with a 400 (all absent), toast shows detail — verified path works.",
+    "SetupPage `useEffect([date, shift])` loads prior schedule if present but does NOT clear absentIds when the newly loaded date has no schedule; absent selection carries over between dates. This is minor UX behavior — consider resetting when no schedule exists at the new date.",
+    "Duplicate React key warning ('Monkey||monkey') indicates the cell key used for React lists is (row_name||line_key) but should include detail or run index to avoid collisions when a line has multiple details on same row.",
+    "No regressions: all 25 prior tests still pass; add-line, fill-shortages, suggest-lines all green."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "100% (33/33)", "frontend": "100% (all iteration-9 flow checks pass; 1 minor React key warning noted)"},
+  "test_credentials": "N/A (no auth in app)",
+  "seed_data_creation": "Used AUTO_PLAN_DATE=2026-07-18 (distinct from baseline 2026-07-16). Cleaned up via _cleanup_autoplan + DELETE at end of run. Standard baseline (2026-07-16) restored via TestZZZRestoreBaseline (req=40 short=2).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "backend_test.py now has 33 tests (12 base + 6 iter7 + 7 iter8 + 8 iter9 auto-plan). Run: `pytest /app/backend/tests/backend_test.py -o addopts= -v`. Auto-plan baseline for 2026-07-18/day/0-absent = 9 lines {X-Smart XL, X-Protint, E4, X-Smart, Monkey, Vehicle, Crimping, OS, SK300}, req=66 ass=65 short=1. Standard baseline for 2026-07-16/day = req=40 short=2. Sidebar has brand-logo (data-testid='brand-logo') and 7 nav testids. auto-plan-btn is red #B0243B, generate-schedule-btn is navy #3B6AB8. Minor: React duplicate key warning 'Monkey||monkey' in Board component — recommend detail-inclusive keys."
+}

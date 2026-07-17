@@ -6,6 +6,7 @@ import {
     fetchPersons,
     fetchSchedule,
     generateSchedule,
+    autoPlan,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +26,7 @@ import {
     PlayCircle,
     Minus,
     Plus,
+    Wand2,
 } from "lucide-react";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -137,6 +139,26 @@ export default function SetupPage() {
         }
     };
 
+    const handleAutoPlan = async () => {
+        setGenerating(true);
+        try {
+            const result = await autoPlan({
+                date,
+                shift,
+                absent_person_ids: Array.from(absentIds),
+                min_coverage: 80,
+            });
+            toast.success(
+                `Auto-planned ${result.line_configs.length} lines · ${result.total_assigned}/${result.total_required} filled`,
+            );
+            navigate(`/board?date=${date}&shift=${shift}`);
+        } catch (e) {
+            toast.error("Auto-plan failed: " + (e.response?.data?.detail || e.message));
+        } finally {
+            setGenerating(false);
+        }
+    };
+
     return (
         <div className="p-6 md:p-8 max-w-[1600px]">
             <header className="mb-8">
@@ -216,13 +238,13 @@ export default function SetupPage() {
                                     <div
                                         key={l.line}
                                         className={`grid grid-cols-12 gap-2 items-center px-4 py-2 border-b border-white/5 last:border-b-0 ${
-                                            cfg.enabled ? "bg-[#007AFF]/5" : "bg-transparent"
+                                            cfg.enabled ? "bg-[#3B6AB8]/5" : "bg-transparent"
                                         }`}
                                         data-testid={`line-row-${l.line}`}
                                     >
                                         <div className="col-span-5 flex items-center gap-3">
                                             <span
-                                                className={`w-2 h-2 ${cfg.enabled ? "bg-[#007AFF]" : "bg-white/15"}`}
+                                                className={`w-2 h-2 ${cfg.enabled ? "bg-[#3B6AB8]" : "bg-white/15"}`}
                                             />
                                             <span className="font-chivo uppercase font-bold text-base">
                                                 {l.line}
@@ -284,7 +306,7 @@ export default function SetupPage() {
                                                 checked={cfg.enabled}
                                                 onCheckedChange={(v) => setCfg(l.line, { enabled: !!v })}
                                                 data-testid={`line-enable-${l.line}`}
-                                                className="border-white/20 data-[state=checked]:bg-[#007AFF] data-[state=checked]:border-[#007AFF] rounded-none"
+                                                className="border-white/20 data-[state=checked]:bg-[#3B6AB8] data-[state=checked]:border-[#3B6AB8] rounded-none"
                                             />
                                         </div>
                                     </div>
@@ -371,10 +393,19 @@ export default function SetupPage() {
                 )}
                 <div className="flex-1" />
                 <Button
+                    onClick={handleAutoPlan}
+                    disabled={generating}
+                    data-testid="auto-plan-btn"
+                    className="bg-[#B0243B] hover:bg-[#B0243B]/85 text-white rounded-none uppercase tracking-widest font-bold px-6 py-6 text-base"
+                >
+                    <Wand2 className="w-5 h-5 mr-2" />
+                    {generating ? "Planning…" : "Auto-Plan From Absentees"}
+                </Button>
+                <Button
                     onClick={handleGenerate}
                     disabled={generating || activeLines.length === 0}
                     data-testid="generate-schedule-btn"
-                    className="bg-[#007AFF] hover:bg-[#007AFF]/85 text-white rounded-none uppercase tracking-widest font-bold px-8 py-6 text-base"
+                    className="bg-[#3B6AB8] hover:bg-[#3B6AB8]/85 text-white rounded-none uppercase tracking-widest font-bold px-8 py-6 text-base"
                 >
                     <PlayCircle className="w-5 h-5 mr-2" />
                     {generating ? "Generating…" : "Generate Schedule"}

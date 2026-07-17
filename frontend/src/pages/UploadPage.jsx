@@ -90,7 +90,7 @@ export default function UploadPage() {
                         onClick={handleUpload}
                         disabled={uploading}
                         data-testid="upload-confirm-btn"
-                        className="rounded-none bg-[#007AFF] hover:bg-[#007AFF]/85 uppercase tracking-widest"
+                        className="rounded-none bg-[#3B6AB8] hover:bg-[#3B6AB8]/85 uppercase tracking-widest"
                     >
                         <CheckCircle2 className="w-4 h-4 mr-2" />
                         {uploading ? "Importing…" : "Import"}

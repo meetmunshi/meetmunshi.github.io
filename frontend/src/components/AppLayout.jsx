@@ -1,7 +1,6 @@
 import { NavLink, Outlet, useSearchParams } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import {
-    Factory,
     LayoutGrid,
     Users,
     Upload,
@@ -31,15 +30,20 @@ export default function AppLayout() {
                 className="w-full md:w-56 md:shrink-0 border-b md:border-b-0 md:border-r border-white/10 bg-[#0a0a0a] flex md:flex-col no-print overflow-x-auto md:overflow-visible"
                 data-testid="app-sidebar"
             >
-                <div className="px-6 py-5 md:py-7 border-r md:border-r-0 md:border-b border-white/10 shrink-0">
+                <div className="px-5 py-4 md:py-5 border-r md:border-r-0 md:border-b border-white/10 shrink-0 bg-gradient-to-b from-[#0a2a5e] to-[#0a1a3e]">
                     <div className="flex items-center gap-3">
-                        <Factory className="w-6 h-6 text-[#007AFF]" strokeWidth={2.5} />
-                        <div>
-                            <div className="font-chivo font-black uppercase tracking-tight text-base leading-none">
-                                FFM Ops
+                        <img
+                            src="/logo/ffm-logo.png"
+                            alt="Fast & Fluid"
+                            className="h-10 w-auto"
+                            data-testid="brand-logo"
+                        />
+                        <div className="hidden md:block">
+                            <div className="text-[10px] tracking-[0.25em] uppercase text-white/70">
+                                Scheduling
                             </div>
-                            <div className="text-[10px] tracking-[0.25em] uppercase text-zinc-500 mt-1">
-                                Scheduling Board
+                            <div className="text-[9px] tracking-[0.2em] uppercase text-white/40 mt-0.5">
+                                Control Room v2
                             </div>
                         </div>
                     </div>
@@ -54,7 +58,7 @@ export default function AppLayout() {
                             className={({ isActive }) =>
                                 `flex items-center gap-3 px-6 py-3 text-sm font-medium uppercase tracking-wider transition-colors md:border-l-2 border-b-2 md:border-b-0 whitespace-nowrap ${
                                     isActive
-                                        ? "md:border-l-[#007AFF] border-b-[#007AFF] bg-white/5 text-white"
+                                        ? "md:border-l-[#3B6AB8] border-b-[#3B6AB8] bg-white/5 text-white"
                                         : "md:border-l-transparent border-b-transparent text-zinc-400 hover:text-white hover:bg-white/5"
                                 }`
                             }

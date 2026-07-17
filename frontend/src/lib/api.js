@@ -19,6 +19,8 @@ export const fillShortages = (date, shift = "day") =>
     api.post(`/schedule/${date}/fill-shortages`, null, { params: { shift } }).then((r) => r.data);
 export const suggestLines = (date, shift = "day") =>
     api.get(`/schedule/${date}/suggest-lines`, { params: { shift } }).then((r) => r.data);
+export const autoPlan = (payload) =>
+    api.post("/schedule/auto-plan", payload).then((r) => r.data);
 export const uploadExcel = (file) => {
     const fd = new FormData();
     fd.append("file", file);

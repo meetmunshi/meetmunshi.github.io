@@ -248,7 +248,7 @@ export default function BoardPage() {
                 </Link>
                 <h1 className="font-chivo font-black uppercase text-4xl">No Schedule for {date} ({shift})</h1>
                 <p className="text-zinc-400 mt-3">
-                    Go to <Link to="/" className="text-[#007AFF] underline">Setup</Link> and generate one.
+                    Go to <Link to="/" className="text-[#3B6AB8] underline">Setup</Link> and generate one.
                 </p>
             </div>
         );
@@ -293,7 +293,7 @@ export default function BoardPage() {
             <header className="flex flex-wrap items-start justify-between gap-4 mb-5 no-print">
                 <div>
                     <div className="text-[10px] tracking-[0.3em] uppercase text-zinc-500 mb-1">
-                        Daily Resource Scheduling Board · <span className="text-[#007AFF]">{shift}</span>
+                        Daily Resource Scheduling Board · <span className="text-[#3B6AB8]">{shift}</span>
                         {updatedLabel && (
                             <span className="ml-3 text-zinc-600 normal-case tracking-normal">
                                 · <span data-testid="updated-label">{updatedLabel}</span>
@@ -359,7 +359,7 @@ export default function BoardPage() {
                         <Printer className="w-4 h-4 mr-2" /> Print / PDF
                     </Button>
                     <a href={exportScheduleUrl(date, shift)} data-testid="export-xlsx-btn">
-                        <Button className="rounded-none bg-[#007AFF] hover:bg-[#007AFF]/85 uppercase tracking-widest text-xs">
+                        <Button className="rounded-none bg-[#3B6AB8] hover:bg-[#3B6AB8]/85 uppercase tracking-widest text-xs">
                             <Download className="w-4 h-4 mr-2" /> Excel
                         </Button>
                     </a>
@@ -703,7 +703,7 @@ function PersonPicker({
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 data-testid="edit-search"
-                className="w-full bg-[#0a0a0a] border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#007AFF]"
+                className="w-full bg-[#0a0a0a] border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#3B6AB8]"
             />
             <div className="text-[10px] uppercase tracking-widest text-zinc-500">
                 Picked {picks.size} · Required {required} · {eligible.length} eligible
@@ -730,7 +730,7 @@ function PersonPicker({
                         <label
                             key={p.id}
                             className={`flex items-center gap-3 px-3 py-2 border-b border-white/5 cursor-pointer ${
-                                checked ? "bg-[#007AFF]/15"
+                                checked ? "bg-[#3B6AB8]/15"
                                     : busy ? "bg-amber-500/5"
                                     : "bg-emerald-500/5 hover:bg-emerald-500/10"
                             }`}
@@ -740,7 +740,7 @@ function PersonPicker({
                                 checked={checked}
                                 onCheckedChange={() => toggle(p.id)}
                                 data-testid={`pick-cb-${p.id}`}
-                                className="border-white/20 data-[state=checked]:bg-[#007AFF] rounded-none mt-0.5"
+                                className="border-white/20 data-[state=checked]:bg-[#3B6AB8] rounded-none mt-0.5"
                             />
                             <div className="flex-1 min-w-0">
                                 <div className="text-sm flex items-center gap-2">
@@ -795,7 +795,7 @@ function PersonPicker({
                 <Button
                     onClick={() => onSave(Array.from(picks))}
                     data-testid="edit-save-btn"
-                    className="rounded-none bg-[#007AFF] hover:bg-[#007AFF]/85 uppercase text-xs tracking-widest"
+                    className="rounded-none bg-[#3B6AB8] hover:bg-[#3B6AB8]/85 uppercase text-xs tracking-widest"
                 >
                     Save
                 </Button>
@@ -875,7 +875,7 @@ function SupportBlock({ item, onEdit }) {
     }
     return (
         <div className="py-2.5" data-testid={`support-line-${item.line}`}>
-            <div className="text-sm font-chivo uppercase font-bold tracking-tight text-[#007AFF]">
+            <div className="text-sm font-chivo uppercase font-bold tracking-tight text-[#3B6AB8]">
                 {item.line}
             </div>
             {item.assignments.map((a) => {

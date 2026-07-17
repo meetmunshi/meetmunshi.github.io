@@ -92,7 +92,7 @@ export default function PersonsPage() {
                                 <div className="col-span-3 flex items-center gap-2">
                                     <div className="flex-1 h-1.5 bg-white/10">
                                         <div
-                                            className="h-full bg-[#007AFF]"
+                                            className="h-full bg-[#3B6AB8]"
                                             style={{
                                                 width: `${(skillCount / Math.max(details.length, 1)) * 100}%`,
                                             }}

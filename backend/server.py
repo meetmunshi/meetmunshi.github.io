@@ -359,6 +359,94 @@ async def generate_schedule(req: ScheduleRequest):
     return sched
 
 
+class AutoPlanRequest(BaseModel):
+    date: str
+    shift: str = "day"
+    absent_person_ids: List[str] = []
+    min_coverage: int = 80          # only include lines with at least this coverage %
+
+
+@api_router.post("/schedule/auto-plan", response_model=Schedule)
+async def auto_plan(req: AutoPlanRequest):
+    """Given absentees, greedily pick lines that maximize headcount utilization.
+    Adds lines one at a time (each at 100%..min_coverage) until no more can be added."""
+    persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
+    details = await db.line_details.find({}, {"_id": 0}).to_list(1000)
+    if not persons or not details:
+        raise HTTPException(400, "No data seeded.")
+
+    absent_set = set(req.absent_person_ids)
+    person_total_skills = {p["id"]: sum(1 for v in p.get("skills", {}).values() if v) for p in persons}
+    details_by_line: Dict[str, List[dict]] = defaultdict(list)
+    for d in details:
+        details_by_line[d["line"]].append(d)
+    all_lines = list(details_by_line.keys())
+
+    selected: List[str] = []
+    used: set = set()
+
+    def score(line: str) -> Tuple[int, int]:
+        """Return (coverage_pct, fillable) for adding this line right now."""
+        line_used: set = set()
+        total_req = 0
+        total_fill = 0
+        for d in details_by_line[line]:
+            eligible = [
+                p for p in persons
+                if bool(p.get("skills", {}).get(d["detail"]))
+                and p["id"] not in absent_set
+                and p["id"] not in used
+                and p["id"] not in line_used
+            ]
+            eligible.sort(key=lambda p: (person_total_skills.get(p["id"], 0), p.get("name", "")))
+            picks = eligible[: d["persons_required"]]
+            for p in picks:
+                line_used.add(p["id"])
+            total_req += d["persons_required"]
+            total_fill += len(picks)
+        pct = 100 if total_req == 0 else round(total_fill * 100 / total_req)
+        return pct, total_fill
+
+    while True:
+        candidates = [l for l in all_lines if l not in selected]
+        best = None
+        best_score = (-1, -1)
+        for l in candidates:
+            s = score(l)
+            if s[0] >= req.min_coverage and s > best_score:
+                best_score = s
+                best = l
+        if not best:
+            break
+        # Commit this line: reserve the people it would use
+        selected.append(best)
+        line_used: set = set()
+        for d in details_by_line[best]:
+            eligible = [
+                p for p in persons
+                if bool(p.get("skills", {}).get(d["detail"]))
+                and p["id"] not in absent_set
+                and p["id"] not in used
+                and p["id"] not in line_used
+            ]
+            eligible.sort(key=lambda p: (person_total_skills.get(p["id"], 0), p.get("name", "")))
+            for c in eligible[: d["persons_required"]]:
+                line_used.add(c["id"])
+        used.update(line_used)
+
+    if not selected:
+        raise HTTPException(400, "Could not auto-plan any line with the current headcount.")
+
+    line_configs = [LineConfig(line=l, priority=i + 1, run_count=1) for i, l in enumerate(selected)]
+    gen_req = ScheduleRequest(
+        date=req.date, shift=req.shift,
+        line_configs=line_configs,
+        absent_person_ids=req.absent_person_ids,
+        overrides={}, unassigned_keys=[],
+    )
+    return await generate_schedule(gen_req)
+
+
 @api_router.get("/schedule/{date}/suggest-lines")
 async def suggest_lines(date: str, shift: str = "day"):
     """Using the free pool (unassigned + not absent), suggest additional lines that could run today."""
