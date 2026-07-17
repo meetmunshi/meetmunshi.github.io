@@ -456,6 +456,154 @@ class TestFillShortagesNotFound:
         assert r.status_code == 404
 
 
+# --- Iteration 8: suggest-lines ---
+class TestSuggestLines:
+    """GET /api/schedule/{date}/suggest-lines?shift=day"""
+
+    def test_baseline_free_pool_and_suggestions(self):
+        _regen_baseline()
+        r = requests.get(
+            f"{API}/schedule/{TEST_DATE}/suggest-lines",
+            params={"shift": SHIFT},
+            timeout=30,
+        )
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert "free_pool_size" in data
+        assert "suggestions" in data
+        assert data["free_pool_size"] == 38, \
+            f"expected free_pool_size=38 for baseline, got {data['free_pool_size']}"
+        assert isinstance(data["suggestions"], list) and len(data["suggestions"]) > 0
+
+    def test_excludes_active_lines(self):
+        r = requests.get(
+            f"{API}/schedule/{TEST_DATE}/suggest-lines",
+            params={"shift": SHIFT},
+            timeout=30,
+        )
+        data = r.json()
+        active = {"X-Smart", "E2", "Spares"}
+        suggested_lines = {s["line"] for s in data["suggestions"]}
+        assert active.isdisjoint(suggested_lines), \
+            f"active lines leaked into suggestions: {active & suggested_lines}"
+
+    def test_expected_fully_covered_lines(self):
+        r = requests.get(
+            f"{API}/schedule/{TEST_DATE}/suggest-lines",
+            params={"shift": SHIFT},
+            timeout=30,
+        )
+        data = r.json()
+        by_line = {s["line"]: s for s in data["suggestions"]}
+        for name in ["X-Smart XL", "E4", "X-Protint", "GX300"]:
+            assert name in by_line, f"expected suggestion for {name}, missing"
+            s = by_line[name]
+            assert s["fully_covered"] is True, f"{name} should be fully_covered"
+            assert s["coverage_pct"] == 100, f"{name} coverage_pct expected 100 got {s['coverage_pct']}"
+
+    def test_sorted_desc_by_coverage_then_fillable_then_line(self):
+        r = requests.get(
+            f"{API}/schedule/{TEST_DATE}/suggest-lines",
+            params={"shift": SHIFT},
+            timeout=30,
+        )
+        sugs = r.json()["suggestions"]
+        # verify sorting key: (-coverage_pct, -fillable, line)
+        keys = [(-s["coverage_pct"], -s["fillable"], s["line"]) for s in sugs]
+        assert keys == sorted(keys), f"suggestions not correctly sorted: {keys}"
+
+    def test_cells_breakdown_shape_and_no_reuse_within_suggestion(self):
+        r = requests.get(
+            f"{API}/schedule/{TEST_DATE}/suggest-lines",
+            params={"shift": SHIFT},
+            timeout=30,
+        )
+        data = r.json()
+        for s in data["suggestions"]:
+            assert isinstance(s["cells"], list) and len(s["cells"]) > 0, s["line"]
+            seen_names = set()
+            total_req = 0
+            total_filled = 0
+            for c in s["cells"]:
+                assert set(["row_name", "detail", "required", "eligible",
+                            "assigned_names", "shortage"]).issubset(c.keys())
+                for n in c["assigned_names"]:
+                    assert n not in seen_names, \
+                        f"person {n} reused across cells in suggestion {s['line']}"
+                    seen_names.add(n)
+                total_req += c["required"]
+                total_filled += len(c["assigned_names"])
+            assert total_req == s["required"]
+            assert total_filled == s["fillable"]
+
+    def test_404_when_schedule_missing(self):
+        # Ensure no schedule at bogus date
+        requests.delete(f"{API}/schedule/1999-01-01", params={"shift": SHIFT}, timeout=30)
+        r = requests.get(
+            f"{API}/schedule/1999-01-01/suggest-lines",
+            params={"shift": SHIFT},
+            timeout=30,
+        )
+        assert r.status_code == 404
+
+    def test_add_line_regenerates_and_shrinks_pool(self):
+        """POST /api/schedule with added line appended at max priority + rc=1."""
+        _regen_baseline()
+        # Get current suggestions
+        r = requests.get(
+            f"{API}/schedule/{TEST_DATE}/suggest-lines",
+            params={"shift": SHIFT},
+            timeout=30,
+        )
+        sugs = r.json()
+        pool_before = sugs["free_pool_size"]
+        # Pick a fully-covered line (X-Smart XL should be one)
+        target_line = next(s["line"] for s in sugs["suggestions"] if s["fully_covered"])
+        target_sug = next(s for s in sugs["suggestions"] if s["line"] == target_line)
+
+        # Fetch current sched to append
+        sched = requests.get(f"{API}/schedule/{TEST_DATE}", params={"shift": SHIFT}, timeout=30).json()
+        cfgs = list(sched["line_configs"])
+        max_prio = max(c["priority"] for c in cfgs)
+        cfgs.append({"line": target_line, "priority": max_prio + 1, "run_count": 1})
+
+        r2 = requests.post(
+            f"{API}/schedule",
+            json={
+                "date": TEST_DATE,
+                "shift": SHIFT,
+                "line_configs": cfgs,
+                "absent_person_ids": sched.get("absent_person_ids", []),
+                "overrides": sched.get("overrides", {}),
+                "unassigned_keys": sched.get("unassigned_keys", []),
+            },
+            timeout=30,
+        )
+        assert r2.status_code == 200
+        new_sched = r2.json()
+        # New line present in line_configs
+        assert any(c["line"] == target_line and c["priority"] == max_prio + 1 and c["run_count"] == 1
+                   for c in new_sched["line_configs"])
+        # New line assignments present
+        added = [a for a in new_sched["assignments"] if a["line"] == target_line]
+        assert len(added) > 0
+
+        # Suggestions after should exclude the newly-added line & pool shrinks by target's fillable
+        r3 = requests.get(
+            f"{API}/schedule/{TEST_DATE}/suggest-lines",
+            params={"shift": SHIFT},
+            timeout=30,
+        )
+        sugs_after = r3.json()
+        after_lines = {s["line"] for s in sugs_after["suggestions"]}
+        assert target_line not in after_lines
+        assert sugs_after["free_pool_size"] == pool_before - target_sug["fillable"], \
+            f"pool should shrink by fillable={target_sug['fillable']}: {pool_before}→{sugs_after['free_pool_size']}"
+
+        # Restore baseline
+        _regen_baseline()
+
+
 # --- final: restore baseline for downstream/manual testing ---
 class TestZZZRestoreBaseline:
     def test_restore(self):

@@ -359,6 +359,71 @@ async def generate_schedule(req: ScheduleRequest):
     return sched
 
 
+@api_router.get("/schedule/{date}/suggest-lines")
+async def suggest_lines(date: str, shift: str = "day"):
+    """Using the free pool (unassigned + not absent), suggest additional lines that could run today."""
+    sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
+    if not sched_doc:
+        raise HTTPException(404, "Schedule not found")
+
+    persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
+    details = await db.line_details.find({}, {"_id": 0}).to_list(1000)
+    absent_set = set(sched_doc.get("absent_person_ids", []))
+    used: set = set()
+    for a in sched_doc["assignments"]:
+        for pid in a["assigned_person_ids"]:
+            used.add(pid)
+
+    active_lines = {c["line"] for c in sched_doc["line_configs"]}
+    free_pool = [p for p in persons if p["id"] not in absent_set and p["id"] not in used]
+    person_total_skills = {p["id"]: sum(1 for v in p.get("skills", {}).values() if v) for p in persons}
+
+    # Group details by line for candidate lines only
+    details_by_line: Dict[str, List[dict]] = defaultdict(list)
+    for d in details:
+        if d["line"] not in active_lines:
+            details_by_line[d["line"]].append(d)
+
+    suggestions = []
+    for line, dets in details_by_line.items():
+        line_used: set = set()
+        cell_reports = []
+        total_req = 0
+        total_filled = 0
+        for d in dets:
+            eligible = [
+                p for p in free_pool
+                if bool(p.get("skills", {}).get(d["detail"]))
+                and p["id"] not in line_used
+            ]
+            eligible.sort(key=lambda p: (person_total_skills.get(p["id"], 0), p.get("name", "")))
+            picks = eligible[: d["persons_required"]]
+            for p in picks:
+                line_used.add(p["id"])
+            total_req += d["persons_required"]
+            total_filled += len(picks)
+            cell_reports.append({
+                "row_name": d.get("row_name") or d["detail"],
+                "detail": d["detail"],
+                "required": d["persons_required"],
+                "eligible": len(eligible),
+                "assigned_names": [f"{p['name']} {p.get('surname','')}".strip() for p in picks],
+                "shortage": max(0, d["persons_required"] - len(picks)),
+            })
+        coverage = 1.0 if total_req == 0 else total_filled / total_req
+        suggestions.append({
+            "line": line,
+            "required": total_req,
+            "fillable": total_filled,
+            "coverage_pct": round(coverage * 100),
+            "fully_covered": total_filled == total_req and total_req > 0,
+            "cells": cell_reports,
+        })
+
+    suggestions.sort(key=lambda s: (-s["coverage_pct"], -s["fillable"], s["line"]))
+    return {"free_pool_size": len(free_pool), "suggestions": suggestions}
+
+
 @api_router.post("/schedule/{date}/fill-shortages", response_model=Schedule)
 async def fill_shortages(date: str, shift: str = "day"):
     """Auto-assign best available free candidates to every shortage cell."""

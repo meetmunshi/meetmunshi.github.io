@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 8 both-side testing complete. Backend: 25/25 pytest pass (12 regression + 6 iter7 fill-shortages + 7 new iter8 suggest-lines). GET /api/schedule/2026-07-16/suggest-lines?shift=day returns free_pool_size=38 with fully_covered=100% for X-Smart XL, E4, X-Protint, GX300 (as spec'd). Active lines (X-Smart/E2/Spares) properly excluded. Sort verified: (-coverage_pct,-fillable,line). Cell-level breakdown validates no person reuse across cells within a single line's computation. 404 on missing schedule. Add-line flow (POST /api/schedule with appended {priority=max+1,run_count=1}) works end-to-end. Frontend: Board /board?date=2026-07-16&shift=day shows suggest-lines-btn under Unassigned row. Clicking opens suggestions-dialog with title 'LINES YOU COULD ALSO RUN', '38 free people available', green fully-covered rows for X-Smart XL/E4/X-Protint/GX300 each with an active suggestion-add-<line> Add button. Clicking Add-X-Smart XL closed dialog, showed success toast 'Added X-Smart XL to today's schedule', board reloaded with new X-Smart XL column (14 slots) and Unassigned pool shrank 38→24. Baseline restored at end (req=40 short=2).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iter8_backend.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "suggest_lines endpoint correctly filters details_by_line to non-active lines only (active_lines set of line_configs).",
+    "line_used set per suggestion prevents cross-cell person reuse within one line's calculation — matches spec.",
+    "Specialist-first sort (person_total_skills asc, name) reused for consistency with fill-shortages.",
+    "coverage_pct rounded to int; sort tuple (-coverage_pct,-fillable,line) — deterministic and correct.",
+    "free_pool derivation = persons - absent - used (across all current cell assignments) — matches UI's unassignedPersons derivation.",
+    "Frontend addLineToSchedule preserves existing overrides + unassigned_keys when appending new line at maxPrio+1, rc=1 (per spec).",
+    "Add button disabled state tied to fillable===0 — verified in SuggestionRow component.",
+    "Minor observation: SuggestionRow adds progress bar and 'gap' preview for partially-covered suggestions, nice UX touch.",
+    "No regressions: /persons alpha sort, /schedule generation, /adjust, /fill-shortages, /export, /analytics, /stats all still green."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "100% (25/25)", "frontend": "100% (all iteration-8 flow checks pass)"},
+  "test_credentials": "N/A (no auth in app)",
+  "seed_data_creation": "None; used existing baseline date=2026-07-16 shift=day (X-Smart p1 rc2, E2 p2 rc1, Spares p3 rc1). Baseline restored via TestZZZRestoreBaseline at end.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "backend_test.py now has 25 tests (12 base + 6 iter7 + 7 iter8). Run: `pytest /app/backend/tests/backend_test.py -o addopts= -v`. Standard baseline: date=2026-07-16 shift=day → req=40 ass=38 short=2 free_pool=38. Fully-covered suggestions on baseline: X-Smart XL(14), E4(13), X-Protint(13), GX300(5). The add-line flow appends at priority=max+1, run_count=1, and preserves overrides/unassigned_keys. TestZZZRestoreBaseline auto-restores baseline at the end."
+}
