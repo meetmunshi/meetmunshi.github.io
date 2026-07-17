@@ -7,6 +7,7 @@ import {
     exportScheduleUrl,
     fetchPersons,
     adjustCell,
+    fillShortages,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,6 +31,7 @@ import {
     RefreshCw,
     Camera,
     UserPlus,
+    Sparkles,
 } from "lucide-react";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -344,11 +346,28 @@ export default function BoardPage() {
             </div>
 
             {summary.shortage > 0 && (
-                <div className="flex items-center gap-3 border border-red-500 bg-red-950/30 text-red-400 px-4 py-3 mb-4 no-print">
+                <div className="flex flex-wrap items-center gap-3 border border-red-500 bg-red-950/30 text-red-400 px-4 py-3 mb-4 no-print">
                     <AlertCircle className="w-5 h-5 animate-pulse" />
-                    <span className="text-sm uppercase tracking-widest">
-                        Critical: {summary.shortage} positions unfilled — click any cell to reassign.
+                    <span className="text-sm uppercase tracking-widest flex-1">
+                        Critical: {summary.shortage} positions unfilled
                     </span>
+                    <Button
+                        onClick={async () => {
+                            try {
+                                const r = await fillShortages(date, shift);
+                                const filled = summary.shortage - r.total_shortage;
+                                if (filled > 0) toast.success(`Filled ${filled} of ${summary.shortage} shortages`);
+                                else toast.info("No free skilled staff available for remaining shortages");
+                                load();
+                            } catch (e) {
+                                toast.error(e.response?.data?.detail || e.message);
+                            }
+                        }}
+                        data-testid="fill-shortages-btn"
+                        className="rounded-none bg-emerald-500 hover:bg-emerald-500/85 text-black uppercase tracking-widest text-xs font-bold"
+                    >
+                        <Sparkles className="w-4 h-4 mr-2" /> Fill All Shortages
+                    </Button>
                 </div>
             )}
 

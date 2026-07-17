@@ -63,7 +63,7 @@ export default function PersonsPage() {
                         <div className="col-span-2">Type</div>
                         <div className="col-span-3">Skills</div>
                     </div>
-                    {filtered.map((p) => {
+                    {filtered.map((p, idx) => {
                         const skillCount = Object.values(p.skills || {}).filter(Boolean)
                             .length;
                         return (
@@ -73,7 +73,7 @@ export default function PersonsPage() {
                                 data-testid={`person-row-${p.id}`}
                             >
                                 <div className="col-span-1 text-zinc-500 font-mono-ibm">
-                                    {p.sn}
+                                    {idx + 1}
                                 </div>
                                 <div className="col-span-3 font-semibold">
                                     {p.name} {p.surname}

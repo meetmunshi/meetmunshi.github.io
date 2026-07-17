@@ -359,6 +359,69 @@ async def generate_schedule(req: ScheduleRequest):
     return sched
 
 
+@api_router.post("/schedule/{date}/fill-shortages", response_model=Schedule)
+async def fill_shortages(date: str, shift: str = "day"):
+    """Auto-assign best available free candidates to every shortage cell."""
+    sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
+    if not sched_doc:
+        raise HTTPException(404, "Schedule not found")
+
+    persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
+    person_by_id = {p["id"]: p for p in persons}
+    person_total_skills = {p["id"]: sum(1 for v in p.get("skills", {}).values() if v) for p in persons}
+    absent_set = set(sched_doc.get("absent_person_ids", []))
+
+    # Currently-assigned person ids across the schedule
+    used: set = set()
+    for a in sched_doc["assignments"]:
+        for pid in a["assigned_person_ids"]:
+            used.add(pid)
+
+    overrides = dict(sched_doc.get("overrides", {}) or {})
+    unassigned = set(sched_doc.get("unassigned_keys", []) or [])
+    filled = 0
+
+    # Sort shortage cells: hardest to fill first (lowest count of skilled free candidates)
+    shortage_cells = [a for a in sched_doc["assignments"] if a["shortage"] > 0]
+    def scarcity(cell):
+        return sum(
+            1 for p in persons
+            if bool(p.get("skills", {}).get(cell["detail"]))
+            and p["id"] not in absent_set
+        )
+    shortage_cells.sort(key=scarcity)
+
+    for cell in shortage_cells:
+        need = cell["shortage"]
+        cell_key = f"{cell['row_name']}||{cell['line_key']}"
+        eligible = [
+            p for p in persons
+            if bool(p.get("skills", {}).get(cell["detail"]))
+            and p["id"] not in absent_set
+            and p["id"] not in used
+        ]
+        # Prefer specialists (fewer skills) so generalists remain for other cells
+        eligible.sort(key=lambda p: (person_total_skills.get(p["id"], 0), p.get("name", "")))
+        picks_new_ids = [c["id"] for c in eligible[:need]]
+        picks_existing = cell["assigned_person_ids"] + picks_new_ids
+        if picks_new_ids:
+            overrides[cell_key] = picks_existing
+            unassigned.discard(cell_key)
+            for pid in picks_new_ids:
+                used.add(pid)
+            filled += len(picks_new_ids)
+
+    req = ScheduleRequest(
+        date=date, shift=shift,
+        line_configs=[LineConfig(**c) for c in sched_doc["line_configs"]],
+        absent_person_ids=sched_doc["absent_person_ids"],
+        overrides=overrides,
+        unassigned_keys=list(unassigned),
+    )
+    result = await generate_schedule(req)
+    return result
+
+
 @api_router.post("/schedule/{date}/adjust")
 async def adjust_cell(date: str, payload: dict):
     """Manual adjustment: swap or unassign a person in a cell.
