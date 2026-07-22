@@ -43,6 +43,7 @@ jobs:
         env:
           CI: false
           PUBLIC_URL: /
+          REACT_APP_BACKEND_URL: https://resource-board-api.onrender.com
         run: yarn build
 
       - name: Verify build output
