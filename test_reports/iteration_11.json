@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 11 tested end-to-end. Backend: 13/13 new tests pass (test_iter11.py). Verified new seed (71 persons / 72 details / 15 lines), SK300 frame renders 4 sub-details totaling 6 required, GX300 frame 2 details totaling 2, /adjust with required=N sets per-detail required_overrides and persists, /mark-absent removes person from all cells + adds to absent list + increments shortage by 1 without autofill replacement, POST /log stores logged_at, GET /reports/absenteeism returns valid xlsx (only_logged=true filter works), and no regression on auto-plan/fill-shortages/suggest-lines. Frontend: Board /board?date=2026-08-05&shift=day shows 4 stacked sub-cells inside cell-frame-SK300 with 'Total 5/6' aggregate footer (mark-absent left one seat short — expected). log-schedule-btn, required-override-input, all Persons sort/filter testids, absenteeism-report-btn + absenteeism-logged-btn all present with correct hrefs. History calendar renders lock icons on logged days (Aug 10 shows lock).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/schedule", "issue": "replace_one() wipes logged_at when regenerating; any manual adjust/mark-absent/fill-shortages after a schedule is logged silently clears logged_at because they all call generate_schedule which upserts a fresh doc without preserving logged_at. Consider preserving logged_at across regeneration (or documenting that any edit unlogs)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter11.py",
+    "/app/test_reports/pytest/pytest_iter11.xml"
+  ],
+  "action_items": [
+    "Consider preserving `logged_at` on POST /api/schedule / /adjust / /mark-absent / /fill-shortages regenerations — currently replace_one overwrites the whole doc and drops the timestamp. If unlog-on-edit is intentional, document it.",
+    "Existing /app/backend/tests/backend_test.py (iter 6-10 suite) still asserts persons==76 and other counts based on the OLD seed and will now fail. Main agent should either delete or update that legacy suite to match the new 71-person seed to keep the regression bar green."
+  ],
+  "critical_code_review_comments": [
+    "server.py POST /schedule/{date}/log uses update_one with $set — safe. But every other write path uses generate_schedule → replace_one which strips logged_at silently. Bug or feature? Please clarify.",
+    "Cell key composition uses '||' as separator (row_name||line_key||detail). Any of those fields containing '||' would collide. Consider a safer join.",
+    "_generate_assignments fallback from cell_key_detail → cell_key_agg for required_overrides works correctly and matches the review spec."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter11.py (new)"
+  ],
+  "success_rate": {"backend": "100% (13/13 iter11 tests)", "frontend": "100% on manually verified flows"},
+  "seed_data_creation": "None — used the already-seeded LATEST Excel (71 persons / 72 details / 15 lines).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_iter11.py runs safely in parallel: log/adjust tests use dedicated dates 2026-08-10 / 2026-08-11 to avoid pytest-xdist worker races on schedule doc replacement. SK/GX schedule fixture uses 2026-08-05. Old backend_test.py hardcodes persons==76 and will fail against the new seed; treat as stale until refreshed. Board manually verified rendering the critical fix: cell-frame-SK300 → 4 sub-cell-frame-SK300-<detail> entries with 'Total N/6' aggregate footer.",
+  "rca of the issue": "N/A — no functional bug. Minor concern only: `replace_one` in generate_schedule doesn't merge logged_at, causing it to be lost on any subsequent edit."
+}

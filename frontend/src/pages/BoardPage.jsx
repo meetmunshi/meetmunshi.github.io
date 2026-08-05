@@ -10,6 +10,8 @@ import {
     fillShortages,
     suggestLines,
     generateSchedule,
+    markAbsentFromBoard,
+    logSchedule,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,6 +38,8 @@ import {
     Sparkles,
     Lightbulb,
     Plus,
+    Lock,
+    CheckCircle2,
 } from "lucide-react";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -182,7 +186,9 @@ export default function BoardPage() {
         (schedule.assignments || []).forEach((a) => {
             if (SUPPORT_LINES.includes(a.line)) return;
             if (!seenR.has(a.row_name)) { rns.push(a.row_name); seenR.add(a.row_name); }
-            mtx[a.row_name + "||" + a.line_key] = a;
+            const k = a.row_name + "||" + a.line_key;
+            if (!mtx[k]) mtx[k] = [];
+            mtx[k].push(a);
         });
 
         // Support column items: one entry per small line
@@ -257,13 +263,14 @@ export default function BoardPage() {
     const openEdit = (a) => setEditCell(a);
     const closeEdit = () => setEditCell(null);
 
-    const savePicks = async (picks) => {
+    const savePicks = async (picks, requiredOverride) => {
         try {
             await adjustCell(date, {
                 shift,
-                cell_key: `${editCell.row_name}||${editCell.line_key}`,
+                cell_key: `${editCell.row_name}||${editCell.line_key}||${editCell.detail}`,
                 action: "set",
                 person_ids: picks,
+                required: requiredOverride,
             });
             toast.success("Updated");
             closeEdit();
@@ -277,11 +284,36 @@ export default function BoardPage() {
         try {
             await adjustCell(date, {
                 shift,
-                cell_key: `${editCell.row_name}||${editCell.line_key}`,
+                cell_key: `${editCell.row_name}||${editCell.line_key}||${editCell.detail}`,
                 action: "clear",
             });
             toast.success("Cleared");
             closeEdit();
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || e.message);
+        }
+    };
+
+    const handleQuickAbsent = async (personId, name) => {
+        if (!window.confirm(`Mark ${name} absent for today?\nThey'll be removed from their cells but the rest of the schedule stays.`)) return;
+        try {
+            await markAbsentFromBoard(date, { shift, person_id: personId });
+            toast.success(`${name} marked absent`);
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || e.message);
+        }
+    };
+
+    const handleLog = async () => {
+        if (!schedule) return;
+        if (schedule.logged_at) {
+            if (!window.confirm("This schedule is already logged. Re-log to update the timestamp?")) return;
+        }
+        try {
+            await logSchedule(date, shift);
+            toast.success("Schedule logged");
             load();
         } catch (e) {
             toast.error(e.response?.data?.detail || e.message);
@@ -363,6 +395,21 @@ export default function BoardPage() {
                             <Download className="w-4 h-4 mr-2" /> Excel
                         </Button>
                     </a>
+                    <Button
+                        onClick={handleLog}
+                        data-testid="log-schedule-btn"
+                        className={`rounded-none uppercase tracking-widest text-xs font-bold ${
+                            schedule?.logged_at
+                                ? "bg-emerald-600 hover:bg-emerald-600/85 text-white"
+                                : "bg-[#B0243B] hover:bg-[#B0243B]/85 text-white"
+                        }`}
+                    >
+                        {schedule?.logged_at ? (
+                            <><CheckCircle2 className="w-4 h-4 mr-2" /> Logged</>
+                        ) : (
+                            <><Lock className="w-4 h-4 mr-2" /> Log</>
+                        )}
+                    </Button>
                 </div>
             </header>
 
@@ -444,8 +491,8 @@ export default function BoardPage() {
                                     {rn.toUpperCase()}
                                 </th>
                                 {colKeys.map((k) => {
-                                    const a = matrix[rn + "||" + k];
-                                    if (!a) {
+                                    const items = matrix[rn + "||" + k];
+                                    if (!items || items.length === 0) {
                                         return (
                                             <td
                                                 key={k}
@@ -456,39 +503,74 @@ export default function BoardPage() {
                                             </td>
                                         );
                                     }
-                                    const shortage = a.shortage > 0;
+                                    const totalReq = items.reduce((s, a) => s + a.required, 0);
+                                    const totalAss = items.reduce((s, a) => s + a.assigned_person_ids.length, 0);
+                                    const totalShort = items.reduce((s, a) => s + a.shortage, 0);
+                                    const shortage = totalShort > 0;
                                     return (
                                         <td
                                             key={k}
-                                            className={`grid-cell px-3 py-2 align-top group cursor-pointer ${
+                                            className={`grid-cell px-3 py-2 align-top ${
                                                 shortage ? "grid-cell-shortage" : "bg-[#0a0a0a]"
                                             }`}
                                             data-testid={`cell-${rn}-${k}`}
-                                            onClick={() => openEdit(a)}
                                         >
-                                            <div className="flex flex-col gap-1">
-                                                {a.assigned_person_names.length === 0 && (
-                                                    <span className="text-zinc-600 text-xs italic">unassigned</span>
+                                            <div className="flex flex-col gap-2">
+                                                {items.map((a) => {
+                                                    const aShort = a.shortage > 0;
+                                                    return (
+                                                        <div
+                                                            key={a.detail}
+                                                            onClick={() => openEdit(a)}
+                                                            className={`group cursor-pointer -mx-1 px-1 py-1 hover:bg-white/5 ${
+                                                                items.length > 1 ? "border-l-2 border-white/10 pl-2" : ""
+                                                            }`}
+                                                            data-testid={`sub-cell-${rn}-${k}-${a.detail}`}
+                                                        >
+                                                            {items.length > 1 && (
+                                                                <div className="text-[9px] uppercase tracking-widest text-zinc-500 mb-0.5 flex items-center justify-between">
+                                                                    <span>{a.detail}</span>
+                                                                    <Pencil className="w-3 h-3 text-zinc-600 opacity-0 group-hover:opacity-100 no-print" />
+                                                                </div>
+                                                            )}
+                                                            {a.assigned_person_names.length === 0 && (
+                                                                <span className="text-zinc-600 text-xs italic">unassigned</span>
+                                                            )}
+                                                            {a.assigned_person_names.map((n, i) => (
+                                                                <div key={i} className="text-sm font-semibold text-white leading-tight flex items-center justify-between group/name">
+                                                                    <span>{n}</span>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={(e) => { e.stopPropagation(); handleQuickAbsent(a.assigned_person_ids[i], n); }}
+                                                                        title="Mark absent from today (removes from cells but keeps rest of plan)"
+                                                                        className="ml-2 opacity-0 group-hover/name:opacity-100 text-red-400 hover:text-red-300 no-print"
+                                                                        data-testid={`quick-absent-${a.assigned_person_ids[i]}`}
+                                                                    >
+                                                                        <UserX className="w-3 h-3" />
+                                                                    </button>
+                                                                </div>
+                                                            ))}
+                                                            {aShort && (
+                                                                <span className="mt-1 inline-flex items-center gap-1 text-red-400 text-[10px] uppercase tracking-widest font-bold animate-pulse">
+                                                                    <AlertCircle className="w-3 h-3" /> Short by {a.shortage}
+                                                                </span>
+                                                            )}
+                                                            <div className="flex items-center justify-between mt-0.5">
+                                                                <span className="text-[10px] text-zinc-500 font-mono-ibm">
+                                                                    {a.assigned_person_names.length}/{a.required}
+                                                                </span>
+                                                                {items.length === 1 && (
+                                                                    <Pencil className="w-3 h-3 text-zinc-600 opacity-0 group-hover:opacity-100 no-print" />
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                                {items.length > 1 && (
+                                                    <div className="text-[10px] text-zinc-400 font-mono-ibm border-t border-white/10 pt-1">
+                                                        Total {totalAss}/{totalReq}
+                                                    </div>
                                                 )}
-                                                {a.assigned_person_names.map((n, i) => (
-                                                    <span
-                                                        key={i}
-                                                        className="text-sm font-semibold text-white leading-tight"
-                                                    >
-                                                        {n}
-                                                    </span>
-                                                ))}
-                                                {shortage && (
-                                                    <span className="mt-1 inline-flex items-center gap-1 text-red-400 text-[10px] uppercase tracking-widest font-bold animate-pulse">
-                                                        <AlertCircle className="w-3 h-3" /> Short by {a.shortage}
-                                                    </span>
-                                                )}
-                                                <div className="flex items-center justify-between mt-0.5">
-                                                    <span className="text-[10px] text-zinc-500 font-mono-ibm">
-                                                        {a.assigned_person_names.length}/{a.required}
-                                                    </span>
-                                                    <Pencil className="w-3 h-3 text-zinc-600 opacity-0 group-hover:opacity-100 no-print" />
-                                                </div>
                                             </div>
                                         </td>
                                     );
@@ -659,7 +741,7 @@ export default function BoardPage() {
                             initialIds={editCell.assigned_person_ids}
                             persons={persons}
                             personLocations={personLocations}
-                            currentCellKey={`${editCell.row_name}||${editCell.line_key}`}
+                            currentCellKey={`${editCell.row_name}||${editCell.line_key}||${editCell.detail}`}
                             absentIds={new Set(schedule.absent_person_ids || [])}
                             onSave={savePicks}
                             onClear={clearCell}
@@ -678,6 +760,7 @@ function PersonPicker({
 }) {
     const [picks, setPicks] = useState(new Set(initialIds));
     const [search, setSearch] = useState("");
+    const [reqOverride, setReqOverride] = useState(required);
 
     const eligible = useMemo(() => {
         const q = search.trim().toLowerCase();
@@ -705,11 +788,28 @@ function PersonPicker({
                 data-testid="edit-search"
                 className="w-full bg-[#0a0a0a] border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#3B6AB8]"
             />
-            <div className="text-[10px] uppercase tracking-widest text-zinc-500">
-                Picked {picks.size} · Required {required} · {eligible.length} eligible
-                {picks.size > required && (
-                    <span className="ml-2 text-emerald-400">
-                        (+{picks.size - required} extra hand{picks.size - required > 1 ? "s" : ""})
+            <div className="text-[10px] uppercase tracking-widest text-zinc-500 flex items-center gap-3">
+                <span>Picked {picks.size}</span>
+                <span className="flex items-center gap-1">
+                    · Required
+                    <input
+                        type="number"
+                        min={0}
+                        value={reqOverride}
+                        onChange={(e) => setReqOverride(Math.max(0, Number(e.target.value)))}
+                        data-testid="required-override-input"
+                        className="w-14 ml-1 bg-[#0a0a0a] border border-white/10 px-1 py-0.5 text-white text-xs text-center rounded-none"
+                    />
+                </span>
+                <span>· {eligible.length} eligible</span>
+                {picks.size > reqOverride && (
+                    <span className="text-emerald-400">
+                        (+{picks.size - reqOverride} extra)
+                    </span>
+                )}
+                {picks.size < reqOverride && (
+                    <span className="text-amber-400">
+                        (short by {reqOverride - picks.size})
                     </span>
                 )}
             </div>
@@ -793,7 +893,7 @@ function PersonPicker({
                     Cancel
                 </Button>
                 <Button
-                    onClick={() => onSave(Array.from(picks))}
+                    onClick={() => onSave(Array.from(picks), reqOverride)}
                     data-testid="edit-save-btn"
                     className="rounded-none bg-[#3B6AB8] hover:bg-[#3B6AB8]/85 uppercase text-xs tracking-widest"
                 >

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchSchedules } from "@/lib/api";
-import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
+import { fetchSchedules, absenteeismReportUrl } from "@/lib/api";
+import { ChevronLeft, ChevronRight, CalendarDays, Download, Lock } from "lucide-react";
 
 export default function HistoryPage() {
     const [items, setItems] = useState([]);
@@ -34,6 +34,9 @@ export default function HistoryPage() {
         setMonth({ y: nd.getFullYear(), m: nd.getMonth() });
     };
 
+    const monthStartISO = `${month.y}-${String(month.m + 1).padStart(2, "0")}-01`;
+    const monthEndISO = `${month.y}-${String(month.m + 1).padStart(2, "0")}-${String(daysInMonth).padStart(2, "0")}`;
+
     const cells = [];
     for (let i = 0; i < firstDay; i++) cells.push(null);
     for (let d = 1; d <= daysInMonth; d++) {
@@ -43,13 +46,27 @@ export default function HistoryPage() {
 
     return (
         <div className="p-6 md:p-8 max-w-5xl">
-            <header className="mb-8">
-                <div className="text-xs tracking-[0.25em] uppercase text-zinc-500 mb-2">
-                    Calendar · Weekly & Monthly View
+            <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
+                <div>
+                    <div className="text-xs tracking-[0.25em] uppercase text-zinc-500 mb-2">
+                        Calendar · Weekly & Monthly View
+                    </div>
+                    <h1 className="font-chivo font-black uppercase text-4xl md:text-5xl tracking-tight leading-none">
+                        Schedule History
+                    </h1>
                 </div>
-                <h1 className="font-chivo font-black uppercase text-4xl md:text-5xl tracking-tight leading-none">
-                    Schedule History
-                </h1>
+                <div className="flex gap-2">
+                    <a href={absenteeismReportUrl(monthStartISO, monthEndISO, false)} data-testid="absenteeism-report-btn">
+                        <button className="border border-white/15 hover:bg-white/10 uppercase tracking-widest text-xs font-bold px-4 py-2 flex items-center gap-2">
+                            <Download className="w-4 h-4" /> Absenteeism · Month
+                        </button>
+                    </a>
+                    <a href={absenteeismReportUrl(monthStartISO, monthEndISO, true)} data-testid="absenteeism-logged-btn">
+                        <button className="border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 uppercase tracking-widest text-xs font-bold px-4 py-2 flex items-center gap-2">
+                            <Lock className="w-4 h-4" /> Logged only
+                        </button>
+                    </a>
+                </div>
             </header>
 
             <div className="border border-white/10 bg-[#111]">
@@ -104,9 +121,12 @@ export default function HistoryPage() {
                                 {c.schedules.map((s) => (
                                     <div
                                         key={s.shift}
-                                        className="text-[10px] uppercase tracking-widest text-zinc-400 mb-0.5"
+                                        className="text-[10px] uppercase tracking-widest text-zinc-400 mb-0.5 flex items-center gap-1"
                                     >
                                         <span className="text-[#3B6AB8]">{s.shift}</span>
+                                        {s.logged_at && (
+                                            <Lock className="w-2.5 h-2.5 text-emerald-400" />
+                                        )}
                                         {s.total_shortage > 0 && (
                                             <span className="ml-1 text-red-400">−{s.total_shortage}</span>
                                         )}

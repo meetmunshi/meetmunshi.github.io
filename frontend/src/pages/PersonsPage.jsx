@@ -2,13 +2,23 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchPersons, fetchDetails } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Search } from "lucide-react";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import { Search, ArrowUpDown } from "lucide-react";
 
 export default function PersonsPage() {
     const [persons, setPersons] = useState([]);
     const [details, setDetails] = useState([]);
     const [search, setSearch] = useState("");
     const [loading, setLoading] = useState(true);
+    const [sortBy, setSortBy] = useState("name");
+    const [sortDir, setSortDir] = useState("asc");
+    const [typeFilter, setTypeFilter] = useState("all");
 
     useEffect(() => {
         Promise.all([fetchPersons(), fetchDetails()])
@@ -19,21 +29,37 @@ export default function PersonsPage() {
             .finally(() => setLoading(false));
     }, []);
 
+    const empTypes = useMemo(() => {
+        const s = new Set();
+        persons.forEach((p) => p.employee_type && s.add(p.employee_type));
+        return Array.from(s).sort();
+    }, [persons]);
+
     const filtered = useMemo(() => {
         const q = search.trim().toLowerCase();
-        if (!q) return persons;
-        return persons.filter((p) =>
+        let list = persons;
+        if (typeFilter !== "all") list = list.filter((p) => p.employee_type === typeFilter);
+        if (q) list = list.filter((p) =>
             `${p.name} ${p.surname} ${p.qualification}`.toLowerCase().includes(q),
         );
-    }, [persons, search]);
+        const skillCount = (p) => Object.values(p.skills || {}).filter(Boolean).length;
+        const cmp = {
+            name: (a, b) => `${a.name} ${a.surname}`.localeCompare(`${b.name} ${b.surname}`),
+            skills: (a, b) => skillCount(a) - skillCount(b),
+            type: (a, b) => (a.employee_type || "").localeCompare(b.employee_type || ""),
+            qualification: (a, b) => (a.qualification || "").localeCompare(b.qualification || ""),
+        }[sortBy];
+        const sorted = [...list].sort(cmp);
+        return sortDir === "desc" ? sorted.reverse() : sorted;
+    }, [persons, search, sortBy, sortDir, typeFilter]);
 
     return (
-        <div className="p-8">
+        <div className="p-6 md:p-8">
             <header className="mb-8">
                 <div className="text-xs tracking-[0.25em] uppercase text-zinc-500 mb-2">
                     Workforce Registry
                 </div>
-                <h1 className="font-chivo font-black uppercase text-5xl tracking-tight leading-none">
+                <h1 className="font-chivo font-black uppercase text-4xl md:text-5xl tracking-tight leading-none">
                     Persons
                 </h1>
                 <p className="text-zinc-400 mt-3 text-sm">
@@ -41,15 +67,59 @@ export default function PersonsPage() {
                 </p>
             </header>
 
-            <div className="flex items-center gap-3 border border-white/10 bg-[#111] px-4 py-3 mb-6 max-w-md">
-                <Search className="w-4 h-4 text-zinc-500" />
-                <Input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search by name or qualification…"
-                    data-testid="persons-search-input"
-                    className="bg-transparent border-0 text-white p-0 h-auto focus-visible:ring-0"
-                />
+            <div className="flex flex-wrap items-center gap-3 mb-6">
+                <div className="flex items-center gap-3 border border-white/10 bg-[#111] px-4 py-2 flex-1 min-w-[220px]">
+                    <Search className="w-4 h-4 text-zinc-500" />
+                    <Input
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder="Search by name or qualification…"
+                        data-testid="persons-search-input"
+                        className="bg-transparent border-0 text-white p-0 h-auto focus-visible:ring-0"
+                    />
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Type</span>
+                    <Select value={typeFilter} onValueChange={setTypeFilter}>
+                        <SelectTrigger
+                            className="rounded-none border-white/10 bg-[#111] w-36 h-9"
+                            data-testid="persons-type-filter"
+                        >
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-none bg-[#111] border-white/10 text-white">
+                            <SelectItem value="all">All types</SelectItem>
+                            {empTypes.map((t) => (
+                                <SelectItem key={t} value={t}>{t}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Sort</span>
+                    <Select value={sortBy} onValueChange={setSortBy}>
+                        <SelectTrigger
+                            className="rounded-none border-white/10 bg-[#111] w-40 h-9"
+                            data-testid="persons-sort-by"
+                        >
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-none bg-[#111] border-white/10 text-white">
+                            <SelectItem value="name">Name</SelectItem>
+                            <SelectItem value="skills">Skill count</SelectItem>
+                            <SelectItem value="type">Employee type</SelectItem>
+                            <SelectItem value="qualification">Qualification</SelectItem>
+                        </SelectContent>
+                    </Select>
+                    <button
+                        onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+                        data-testid="persons-sort-dir"
+                        title={sortDir === "asc" ? "Ascending" : "Descending"}
+                        className="h-9 w-9 border border-white/10 bg-[#111] hover:bg-white/10 flex items-center justify-center"
+                    >
+                        <ArrowUpDown className={`w-4 h-4 ${sortDir === "desc" ? "rotate-180" : ""} transition-transform`} />
+                    </button>
+                </div>
             </div>
 
             {loading ? (

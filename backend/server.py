@@ -59,8 +59,9 @@ class ScheduleRequest(BaseModel):
     shift: str = "day"           # day | evening | night
     line_configs: List[LineConfig] = []
     absent_person_ids: List[str] = []
-    overrides: Dict[str, List[str]] = {}   # key = f"{row_name}||{line}#{run}" -> person_ids
-    unassigned_keys: List[str] = []        # keys the user explicitly cleared
+    overrides: Dict[str, List[str]] = {}   # key = f"{row_name}||{line_key}||{detail}" or f"{row_name}||{line_key}" -> person_ids
+    unassigned_keys: List[str] = []
+    required_overrides: Dict[str, int] = {}  # key = f"{row_name}||{line_key}||{detail}" -> new required count
 
 
 class CellAssignment(BaseModel):
@@ -85,6 +86,8 @@ class Schedule(BaseModel):
     assignments: List[CellAssignment]
     overrides: Dict[str, List[str]] = {}
     unassigned_keys: List[str] = []
+    required_overrides: Dict[str, int] = {}
+    logged_at: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     total_required: int = 0
     total_assigned: int = 0
@@ -296,11 +299,13 @@ def _generate_assignments(
     absent_ids: List[str],
     overrides: Dict[str, List[str]],
     unassigned_keys: List[str],
+    required_overrides: Optional[Dict[str, int]] = None,
 ) -> List[CellAssignment]:
     persons = persons or []
     details = details or []
     overrides = overrides or {}
     unassigned_keys = unassigned_keys or []
+    required_overrides = required_overrides or {}
 
     person_total_skills = {p["id"]: sum(1 for v in p.get("skills", {}).values() if v) for p in persons}
     person_by_id = {p["id"]: p for p in persons}
@@ -324,13 +329,25 @@ def _generate_assignments(
     for _priority, line, run_idx, d in work:
         detail_name = d["detail"]
         row_name = d.get("row_name") or detail_name
-        required = d["persons_required"]
         line_key = f"{line}" if run_idx == 1 else f"{line} #{run_idx}"
-        cell_key = f"{row_name}||{line_key}"
+        cell_key_detail = f"{row_name}||{line_key}||{detail_name}"
+        cell_key_agg = f"{row_name}||{line_key}"
 
-        picks = _apply_override_picks(cell_key, overrides, person_by_id, absent_set)
+        # Required can be overridden by user (per-detail preferred, else per-aggregate)
+        base_required = d["persons_required"]
+        required = required_overrides.get(cell_key_detail)
+        if required is None:
+            required = required_overrides.get(cell_key_agg, base_required)
+        required = max(0, int(required))
 
-        if cell_key not in unassigned_set:
+        # Overrides — prefer detail-specific key, fall back to aggregate key
+        picks = _apply_override_picks(cell_key_detail, overrides, person_by_id, absent_set)
+        if not picks:
+            picks = _apply_override_picks(cell_key_agg, overrides, person_by_id, absent_set)
+        picks = list(picks)
+
+        was_cleared = cell_key_detail in unassigned_set or cell_key_agg in unassigned_set
+        if not was_cleared:
             remaining = required - len(picks)
             if remaining > 0:
                 extras = _select_eligible(
@@ -359,7 +376,7 @@ async def generate_schedule(req: ScheduleRequest):
         raise HTTPException(400, "No data seeded.")
     assignments = _generate_assignments(
         persons, details, req.line_configs, req.absent_person_ids,
-        req.overrides, req.unassigned_keys,
+        req.overrides, req.unassigned_keys, req.required_overrides,
     )
     total_req = sum(a.required for a in assignments)
     total_assigned = sum(len(a.assigned_person_ids) for a in assignments)
@@ -369,6 +386,7 @@ async def generate_schedule(req: ScheduleRequest):
         absent_person_ids=req.absent_person_ids,
         assignments=assignments, overrides=req.overrides,
         unassigned_keys=req.unassigned_keys,
+        required_overrides=req.required_overrides,
         total_required=total_req, total_assigned=total_assigned, total_shortage=total_short,
     )
     doc = sched.model_dump()
@@ -601,11 +619,12 @@ async def fill_shortages(date: str, shift: str = "day"):
 @api_router.post("/schedule/{date}/adjust")
 async def adjust_cell(date: str, payload: dict):
     """Manual adjustment: swap or unassign a person in a cell.
-    payload = {shift, cell_key, person_ids: [list], action: 'set' | 'clear'}"""
+    payload = {shift, cell_key, person_ids: [list], action: 'set' | 'clear', required?: int}"""
     shift = payload.get("shift", "day")
     cell_key = payload.get("cell_key")
     action = payload.get("action", "set")
     person_ids = payload.get("person_ids", [])
+    new_required = payload.get("required")
     if not cell_key:
         raise HTTPException(400, "cell_key required")
     sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
@@ -613,20 +632,138 @@ async def adjust_cell(date: str, payload: dict):
         raise HTTPException(404, "Schedule not found")
     overrides = sched_doc.get("overrides", {}) or {}
     unassigned = set(sched_doc.get("unassigned_keys", []) or [])
+    required_overrides = dict(sched_doc.get("required_overrides", {}) or {})
     if action == "clear":
         overrides.pop(cell_key, None)
         unassigned.add(cell_key)
     else:
         overrides[cell_key] = person_ids
         unassigned.discard(cell_key)
+    if new_required is not None:
+        required_overrides[cell_key] = max(0, int(new_required))
     req = ScheduleRequest(
         date=date, shift=shift,
         line_configs=[LineConfig(**c) for c in sched_doc["line_configs"]],
         absent_person_ids=sched_doc["absent_person_ids"],
         overrides=overrides,
         unassigned_keys=list(unassigned),
+        required_overrides=required_overrides,
     )
     return await generate_schedule(req)
+
+
+@api_router.post("/schedule/{date}/mark-absent")
+async def mark_absent_from_board(date: str, payload: dict):
+    """Mark a person absent from the board WITHOUT re-planning. Removes them from all cells they're in.
+    Other assignments stay put. payload = {shift, person_id}"""
+    shift = payload.get("shift", "day")
+    person_id = payload.get("person_id")
+    if not person_id:
+        raise HTTPException(400, "person_id required")
+    sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
+    if not sched_doc:
+        raise HTTPException(404, "Schedule not found")
+
+    absent = list(sched_doc.get("absent_person_ids", []) or [])
+    if person_id not in absent:
+        absent.append(person_id)
+
+    # Build overrides for every currently-assigned cell EXCLUDING this person, and keep the
+    # rest of assignments frozen — no full regeneration, so plan doesn't shuffle.
+    overrides = dict(sched_doc.get("overrides", {}) or {})
+    unassigned = set(sched_doc.get("unassigned_keys", []) or [])
+    required_overrides = dict(sched_doc.get("required_overrides", {}) or {})
+
+    for a in sched_doc["assignments"]:
+        if person_id not in a["assigned_person_ids"]:
+            continue
+        cell_key = f"{a['row_name']}||{a['line_key']}||{a['detail']}"
+        remaining = [pid for pid in a["assigned_person_ids"] if pid != person_id]
+        overrides[cell_key] = remaining
+        # Prevent auto-fill from replacing this person — plan stays as-is, cell shows as short
+        unassigned.add(cell_key)
+
+    req = ScheduleRequest(
+        date=date, shift=shift,
+        line_configs=[LineConfig(**c) for c in sched_doc["line_configs"]],
+        absent_person_ids=absent,
+        overrides=overrides,
+        unassigned_keys=list(unassigned),
+        required_overrides=required_overrides,
+    )
+    return await generate_schedule(req)
+
+
+@api_router.post("/schedule/{date}/log")
+async def log_schedule(date: str, shift: str = "day"):
+    """Freeze the current schedule as 'logged' so it counts for History reports."""
+    now = datetime.now(timezone.utc).isoformat()
+    r = await db.schedules.update_one(
+        {"date": date, "shift": shift},
+        {"$set": {"logged_at": now}},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(404, "Schedule not found")
+    return {"logged_at": now}
+
+
+@api_router.get("/reports/absenteeism")
+async def absenteeism_report(start: str, end: str, only_logged: bool = False):
+    """Return an Excel report of absentees per date within [start, end]."""
+    query = {"date": {"$gte": start, "$lte": end}}
+    if only_logged:
+        query["logged_at"] = {"$ne": None}
+    docs = await db.schedules.find(query, {"_id": 0}).sort("date", 1).to_list(500)
+    persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
+    p_by_id = {p["id"]: p for p in persons}
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Absenteeism"
+    headers = ["Date", "Shift", "Absent Count", "Names", "Logged At"]
+    for ci, h in enumerate(headers, 1):
+        ws.cell(row=1, column=ci, value=h).font = Font(bold=True)
+    for ri, s in enumerate(docs, 2):
+        absent_ids = s.get("absent_person_ids", []) or []
+        names = ", ".join(
+            _person_full_name(p_by_id[pid]) for pid in absent_ids if pid in p_by_id
+        ) or ""
+        ws.cell(row=ri, column=1, value=s["date"])
+        ws.cell(row=ri, column=2, value=s.get("shift", "day"))
+        ws.cell(row=ri, column=3, value=len(absent_ids))
+        ws.cell(row=ri, column=4, value=names)
+        ws.cell(row=ri, column=5, value=s.get("logged_at") or "")
+    for col_letter, width in [("A", 12), ("B", 10), ("C", 14), ("D", 80), ("E", 30)]:
+        ws.column_dimensions[col_letter].width = width
+
+    # Second sheet: per-person absenteeism totals
+    ws2 = wb.create_sheet("By Person")
+    counts: Dict[str, int] = defaultdict(int)
+    dates_by_person: Dict[str, List[str]] = defaultdict(list)
+    for s in docs:
+        for pid in s.get("absent_person_ids", []) or []:
+            counts[pid] += 1
+            dates_by_person[pid].append(s["date"])
+    ws2.cell(row=1, column=1, value="Name").font = Font(bold=True)
+    ws2.cell(row=1, column=2, value="Absent Days").font = Font(bold=True)
+    ws2.cell(row=1, column=3, value="Dates").font = Font(bold=True)
+    ranked = sorted(counts.items(), key=lambda x: (-x[1], p_by_id.get(x[0], {}).get("name", "")))
+    for ri, (pid, cnt) in enumerate(ranked, 2):
+        p = p_by_id.get(pid)
+        ws2.cell(row=ri, column=1, value=_person_full_name(p) if p else pid)
+        ws2.cell(row=ri, column=2, value=cnt)
+        ws2.cell(row=ri, column=3, value=", ".join(dates_by_person[pid]))
+    for col_letter, width in [("A", 28), ("B", 12), ("C", 80)]:
+        ws2.column_dimensions[col_letter].width = width
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return Response(
+        content=buf.read(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="absenteeism-{start}-to-{end}.xlsx"'},
+    )
 
 
 @api_router.get("/schedule/{date}", response_model=Optional[Schedule])

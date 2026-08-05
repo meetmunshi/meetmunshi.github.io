@@ -15,6 +15,12 @@ export const generateSchedule = (payload) =>
     api.post("/schedule", payload).then((r) => r.data);
 export const adjustCell = (date, payload) =>
     api.post(`/schedule/${date}/adjust`, payload).then((r) => r.data);
+export const markAbsentFromBoard = (date, payload) =>
+    api.post(`/schedule/${date}/mark-absent`, payload).then((r) => r.data);
+export const logSchedule = (date, shift = "day") =>
+    api.post(`/schedule/${date}/log`, null, { params: { shift } }).then((r) => r.data);
+export const absenteeismReportUrl = (start, end, onlyLogged = false) =>
+    `${API}/reports/absenteeism?start=${start}&end=${end}&only_logged=${onlyLogged}`;
 export const fillShortages = (date, shift = "day") =>
     api.post(`/schedule/${date}/fill-shortages`, null, { params: { shift } }).then((r) => r.data);
 export const suggestLines = (date, shift = "day") =>
