@@ -260,14 +260,27 @@ export default function BoardPage() {
         );
     }
 
-    const openEdit = (a) => setEditCell(a);
+    const openEdit = (item) => {
+        // `item` is either a single assignment or an array of sub-detail assignments
+        if (Array.isArray(item)) {
+            setEditCell({ multi: true, items: item, current: item[0] });
+        } else {
+            setEditCell({ multi: false, items: [item], current: item });
+        }
+    };
     const closeEdit = () => setEditCell(null);
 
+    const switchSubDetail = (a) => {
+        setEditCell((prev) => prev ? { ...prev, current: a } : prev);
+    };
+
     const savePicks = async (picks, requiredOverride) => {
+        const cell = editCell?.current;
+        if (!cell) return;
         try {
             await adjustCell(date, {
                 shift,
-                cell_key: `${editCell.row_name}||${editCell.line_key}||${editCell.detail}`,
+                cell_key: `${cell.row_name}||${cell.line_key}||${cell.detail}`,
                 action: "set",
                 person_ids: picks,
                 required: requiredOverride,
@@ -281,10 +294,12 @@ export default function BoardPage() {
     };
 
     const clearCell = async () => {
+        const cell = editCell?.current;
+        if (!cell) return;
         try {
             await adjustCell(date, {
                 shift,
-                cell_key: `${editCell.row_name}||${editCell.line_key}||${editCell.detail}`,
+                cell_key: `${cell.row_name}||${cell.line_key}||${cell.detail}`,
                 action: "clear",
             });
             toast.success("Cleared");
@@ -504,73 +519,54 @@ export default function BoardPage() {
                                         );
                                     }
                                     const totalReq = items.reduce((s, a) => s + a.required, 0);
-                                    const totalAss = items.reduce((s, a) => s + a.assigned_person_ids.length, 0);
+                                    const allIds = items.flatMap((a) => a.assigned_person_ids);
+                                    const allNames = items.flatMap((a) => a.assigned_person_names);
                                     const totalShort = items.reduce((s, a) => s + a.shortage, 0);
                                     const shortage = totalShort > 0;
+                                    const openCellEdit = () => openEdit(items.length === 1 ? items[0] : items);
                                     return (
                                         <td
                                             key={k}
-                                            className={`grid-cell px-3 py-2 align-top ${
+                                            className={`grid-cell px-3 py-2 align-top group cursor-pointer ${
                                                 shortage ? "grid-cell-shortage" : "bg-[#0a0a0a]"
                                             }`}
                                             data-testid={`cell-${rn}-${k}`}
+                                            onClick={openCellEdit}
                                         >
-                                            <div className="flex flex-col gap-2">
-                                                {items.map((a) => {
-                                                    const aShort = a.shortage > 0;
-                                                    return (
-                                                        <div
-                                                            key={a.detail}
-                                                            onClick={() => openEdit(a)}
-                                                            className={`group cursor-pointer -mx-1 px-1 py-1 hover:bg-white/5 ${
-                                                                items.length > 1 ? "border-l-2 border-white/10 pl-2" : ""
-                                                            }`}
-                                                            data-testid={`sub-cell-${rn}-${k}-${a.detail}`}
-                                                        >
-                                                            {items.length > 1 && (
-                                                                <div className="text-[9px] uppercase tracking-widest text-zinc-500 mb-0.5 flex items-center justify-between">
-                                                                    <span>{a.detail}</span>
-                                                                    <Pencil className="w-3 h-3 text-zinc-600 opacity-0 group-hover:opacity-100 no-print" />
-                                                                </div>
-                                                            )}
-                                                            {a.assigned_person_names.length === 0 && (
-                                                                <span className="text-zinc-600 text-xs italic">unassigned</span>
-                                                            )}
-                                                            {a.assigned_person_names.map((n, i) => (
-                                                                <div key={i} className="text-sm font-semibold text-white leading-tight flex items-center justify-between group/name">
-                                                                    <span>{n}</span>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={(e) => { e.stopPropagation(); handleQuickAbsent(a.assigned_person_ids[i], n); }}
-                                                                        title="Mark absent from today (removes from cells but keeps rest of plan)"
-                                                                        className="ml-2 opacity-0 group-hover/name:opacity-100 text-red-400 hover:text-red-300 no-print"
-                                                                        data-testid={`quick-absent-${a.assigned_person_ids[i]}`}
-                                                                    >
-                                                                        <UserX className="w-3 h-3" />
-                                                                    </button>
-                                                                </div>
-                                                            ))}
-                                                            {aShort && (
-                                                                <span className="mt-1 inline-flex items-center gap-1 text-red-400 text-[10px] uppercase tracking-widest font-bold animate-pulse">
-                                                                    <AlertCircle className="w-3 h-3" /> Short by {a.shortage}
-                                                                </span>
-                                                            )}
-                                                            <div className="flex items-center justify-between mt-0.5">
-                                                                <span className="text-[10px] text-zinc-500 font-mono-ibm">
-                                                                    {a.assigned_person_names.length}/{a.required}
-                                                                </span>
-                                                                {items.length === 1 && (
-                                                                    <Pencil className="w-3 h-3 text-zinc-600 opacity-0 group-hover:opacity-100 no-print" />
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
-                                                {items.length > 1 && (
-                                                    <div className="text-[10px] text-zinc-400 font-mono-ibm border-t border-white/10 pt-1">
-                                                        Total {totalAss}/{totalReq}
-                                                    </div>
+                                            <div className="flex flex-col gap-1">
+                                                {allNames.length === 0 && (
+                                                    <span className="text-zinc-600 text-xs italic">unassigned</span>
                                                 )}
+                                                {allNames.map((n, i) => (
+                                                    <div key={i} className="text-sm font-semibold text-white leading-tight flex items-center justify-between group/name">
+                                                        <span>{n}</span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => { e.stopPropagation(); handleQuickAbsent(allIds[i], n); }}
+                                                            title="Mark absent from today"
+                                                            className="ml-2 opacity-0 group-hover/name:opacity-100 text-red-400 hover:text-red-300 no-print"
+                                                            data-testid={`quick-absent-${allIds[i]}`}
+                                                        >
+                                                            <UserX className="w-3 h-3" />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                                {shortage && (
+                                                    <span className="mt-1 inline-flex items-center gap-1 text-red-400 text-[10px] uppercase tracking-widest font-bold animate-pulse">
+                                                        <AlertCircle className="w-3 h-3" /> Short by {totalShort}
+                                                    </span>
+                                                )}
+                                                <div className="flex items-center justify-between mt-0.5">
+                                                    <span className="text-[10px] text-zinc-500 font-mono-ibm">
+                                                        {allIds.length}/{totalReq}
+                                                        {items.length > 1 && (
+                                                            <span className="ml-1 text-zinc-600">
+                                                                · {items.length} tasks
+                                                            </span>
+                                                        )}
+                                                    </span>
+                                                    <Pencil className="w-3 h-3 text-zinc-600 opacity-0 group-hover:opacity-100 no-print" />
+                                                </div>
                                             </div>
                                         </td>
                                     );
@@ -727,21 +723,43 @@ export default function BoardPage() {
                 >
                     <DialogHeader>
                         <DialogTitle className="font-chivo uppercase tracking-tight">
-                            Adjust · {editCell?.row_name} × {editCell?.line_key}
+                            Adjust · {editCell?.current?.row_name} × {editCell?.current?.line_key}
                         </DialogTitle>
                         <DialogDescription className="text-xs text-zinc-500">
-                            Skill required: <span className="text-zinc-300">{editCell?.detail}</span> ·{" "}
-                            Required: {editCell?.required}
+                            Skill required: <span className="text-zinc-300">{editCell?.current?.detail}</span> ·{" "}
+                            Required: {editCell?.current?.required}
                         </DialogDescription>
                     </DialogHeader>
-                    {editCell && (
+                    {editCell?.multi && editCell.items.length > 1 && (
+                        <div className="flex flex-wrap gap-1.5 mb-2 border-b border-white/10 pb-3">
+                            <span className="text-[10px] uppercase tracking-widest text-zinc-500 mr-1 self-center">
+                                Sub-task:
+                            </span>
+                            {editCell.items.map((it) => (
+                                <button
+                                    key={it.detail}
+                                    onClick={() => switchSubDetail(it)}
+                                    data-testid={`sub-task-tab-${it.detail}`}
+                                    className={`text-[10px] uppercase tracking-widest px-2 py-1 border ${
+                                        editCell.current?.detail === it.detail
+                                            ? "border-[#3B6AB8] bg-[#3B6AB8]/20 text-white"
+                                            : "border-white/10 text-zinc-400 hover:bg-white/5"
+                                    }`}
+                                >
+                                    {it.detail} <span className="text-zinc-500 ml-1">{it.assigned_person_ids.length}/{it.required}</span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                    {editCell?.current && (
                         <PersonPicker
-                            detail={editCell.detail}
-                            required={editCell.required}
-                            initialIds={editCell.assigned_person_ids}
+                            key={editCell.current.detail}
+                            detail={editCell.current.detail}
+                            required={editCell.current.required}
+                            initialIds={editCell.current.assigned_person_ids}
                             persons={persons}
                             personLocations={personLocations}
-                            currentCellKey={`${editCell.row_name}||${editCell.line_key}||${editCell.detail}`}
+                            currentCellKey={`${editCell.current.row_name}||${editCell.current.line_key}||${editCell.current.detail}`}
                             absentIds={new Set(schedule.absent_person_ids || [])}
                             onSave={savePicks}
                             onClear={clearCell}

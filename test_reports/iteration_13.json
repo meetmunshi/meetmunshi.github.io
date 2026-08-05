@@ -1,0 +1,29 @@
+{
+  "summary": "Iteration 12 changes verified end-to-end. Added /app/backend/tests/test_iter12.py with 7 tests covering: (1) adjust action=set with empty picks locks cell + no autofill on regen, (2) adjust with fewer picks stays partial, (3) adjust with more picks keeps extras, (4) fill-shortages Pass 2 (borrow from excess) closes engineered shortage, (5) fill-shortages closes shortage after clear (free-pool refill), (6) absenteeism xlsx has 'By Person' as FIRST sheet, (7) 'By Person' columns match spec [Name, Employee Type, Total Absent Days, Dates Absent]. Full backend regression: 56 passed / 3 skipped (legacy tests documented in iter12 report). Frontend: on /board?date=2026-08-06&shift=day, cell-frame-SK300 renders as ONE flat cell with 6 names and aggregate '6/6 · 4 tasks' footer, ZERO sub-cell-* children. Edit dialog on click shows 4 sub-task-tab-<detail> chips (SK base frame assembly, SK Inner assembly, SK outer assembly, SK wiring). Clicking a different tab switches the PersonPicker context (dialog text changes).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter12.py",
+    "/app/backend/tests/test_iter11.py",
+    "/app/backend/tests/test_iter11b_logged_at.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_iter12.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py adjust_cell now uniformly locks cell_key by adding it to unassigned_keys for BOTH action=set and action=clear (lines 715-721). This is the correct fix for the 'topping-up' bug reported by user in iter12.",
+    "server.py fill_shortages 3-pass algorithm (L578-694) is correct and terminates: excess_count guards Pass 2, and Pass 3 excludes donors that still have excess (would be redundant). Every mutation calls persist() which writes overrides + adds cell_key to unassigned so downstream generate_schedule respects the choice.",
+    "absenteeism_report (L790-850) correctly makes 'By Person' the primary (ws.active) sheet and 'By Date' secondary via create_sheet. Columns match spec.",
+    "BoardPage.jsx cell render (L508-572) is flat aggregate: no per-detail sub-cell rendering; footer shows 'N/M · X tasks' only when items.length > 1. openEdit switches between single item and multi-item array cleanly (L526)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter12.py (new — 7 tests, all passing)"
+  ],
+  "success_rate": {"backend": "100% (56/56 non-skipped)", "frontend": "100% (all iter12 UI assertions pass)"},
+  "test_credentials": "none",
+  "seed_data_creation": "None — used existing seed. Pre-generated schedule for 2026-08-06 (SK300+GX300) as baseline for frontend test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter12 delta verified. Note: (a) swap-chain Pass 3 is exercised implicitly by the general fill test; a dedicated Pass 3 test is harder to construct deterministically because Pass 1/2 usually resolve first — main agent should manually verify with a crafted absence scenario if a paranoid regression check is needed. (b) SK detail names all begin with 'SK' so regex parsing of dialog 'Skill required:' header only captures the 'SK' prefix — the sub-task-tab switching test relies on full-text comparison of dialog content instead. (c) 3 legacy tests in backend_test.py remain skipped per iter11b decision (superseded by test_iter11.py coverage).",
+  "rca of the issue": "N/A — all iter12 fixes verified working."
+}

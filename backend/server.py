@@ -576,40 +576,112 @@ async def suggest_lines(date: str, shift: str = "day"):
 
 @api_router.post("/schedule/{date}/fill-shortages", response_model=Schedule)
 async def fill_shortages(date: str, shift: str = "day"):
-    """Auto-assign best available free candidates to every shortage cell."""
+    """Auto-assign best available skilled candidates to every shortage cell.
+    Pass 1: use FREE pool (not assigned anywhere).
+    Pass 2: BORROW from cells that currently have MORE people than their required count.
+    Pass 3: SWAP — if a shortage still exists and a skilled person is assigned elsewhere but a
+              qualified replacement is free for that other cell, chain the swap."""
     sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
     if not sched_doc:
         raise HTTPException(404, "Schedule not found")
 
     persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
+    person_by_id = {p["id"]: p for p in persons}
     skill_totals = _skill_totals(persons)
     absent_set = set(sched_doc.get("absent_person_ids", []))
-    used = _collect_used_person_ids(sched_doc)
-
     overrides = dict(sched_doc.get("overrides", {}) or {})
     unassigned = set(sched_doc.get("unassigned_keys", []) or [])
 
-    def scarcity(cell: dict) -> int:
-        return sum(
-            1 for p in persons
-            if bool(p.get("skills", {}).get(cell["detail"])) and p["id"] not in absent_set
-        )
+    # Work on a mutable copy of the current cell state
+    assignments = [dict(a) for a in sched_doc["assignments"]]
+    for a in assignments:
+        a["assigned_person_ids"] = list(a["assigned_person_ids"])
 
-    shortage_cells = sorted(
-        [a for a in sched_doc["assignments"] if a["shortage"] > 0],
-        key=scarcity,
-    )
+    def cell_key(a: dict) -> str:
+        return f"{a['row_name']}||{a['line_key']}||{a['detail']}"
 
-    for cell in shortage_cells:
-        cell_key = f"{cell['row_name']}||{cell['line_key']}"
-        excluded = absent_set | used
-        new_picks = _pick_specialists(cell["detail"], cell["shortage"], persons, skill_totals, excluded)
-        new_ids = [p["id"] for p in new_picks]
-        if not new_ids:
+    def persist(a: dict):
+        overrides[cell_key(a)] = a["assigned_person_ids"]
+        unassigned.add(cell_key(a))  # lock exact list, no auto-fill
+
+    def is_short(a: dict) -> bool:
+        return len(a["assigned_person_ids"]) < a["required"]
+
+    def excess_count(a: dict) -> int:
+        return max(0, len(a["assigned_person_ids"]) - a["required"])
+
+    def used_ids() -> set:
+        u: set = set()
+        for a in assignments:
+            u.update(a["assigned_person_ids"])
+        return u
+
+    # --- Pass 1: FREE pool ---
+    for cell in sorted(assignments, key=lambda a: (a["required"] - len(a["assigned_person_ids"]))):
+        if not is_short(cell):
             continue
-        overrides[cell_key] = cell["assigned_person_ids"] + new_ids
-        unassigned.discard(cell_key)
-        used.update(new_ids)
+        need = cell["required"] - len(cell["assigned_person_ids"])
+        excluded = absent_set | used_ids()
+        picks = _pick_specialists(cell["detail"], need, persons, skill_totals, excluded)
+        if picks:
+            cell["assigned_person_ids"].extend(p["id"] for p in picks)
+            persist(cell)
+
+    # --- Pass 2: BORROW from excess ---
+    for cell in assignments:
+        if not is_short(cell):
+            continue
+        for donor in assignments:
+            if donor is cell:
+                continue
+            if excess_count(donor) <= 0:
+                continue
+            # Find someone in donor with the shortage cell's skill
+            for pid in list(donor["assigned_person_ids"]):
+                p = person_by_id.get(pid)
+                if not p or not bool(p.get("skills", {}).get(cell["detail"])):
+                    continue
+                donor["assigned_person_ids"].remove(pid)
+                cell["assigned_person_ids"].append(pid)
+                persist(donor)
+                persist(cell)
+                if not is_short(cell):
+                    break
+            if not is_short(cell):
+                break
+
+    # --- Pass 3: SWAP CHAIN — move X from another cell if a free person can replace X ---
+    for cell in assignments:
+        if not is_short(cell):
+            continue
+        for donor in assignments:
+            if donor is cell or excess_count(donor) > 0:
+                continue
+            for pid in list(donor["assigned_person_ids"]):
+                p = person_by_id.get(pid)
+                if not p or not bool(p.get("skills", {}).get(cell["detail"])):
+                    continue
+                # Can we free `pid` by replacing them at `donor` with someone from the free pool?
+                excluded = absent_set | used_ids()
+                excluded.discard(pid)   # pretend they're free during search
+                replacements = _pick_specialists(
+                    donor["detail"], 1, persons, skill_totals, excluded,
+                )
+                if not replacements:
+                    continue
+                rep = replacements[0]
+                if rep["id"] == pid:
+                    continue
+                # Do the chain
+                donor["assigned_person_ids"].remove(pid)
+                donor["assigned_person_ids"].append(rep["id"])
+                cell["assigned_person_ids"].append(pid)
+                persist(donor)
+                persist(cell)
+                if not is_short(cell):
+                    break
+            if not is_short(cell):
+                break
 
     req = ScheduleRequest(
         date=date, shift=shift,
@@ -617,6 +689,7 @@ async def fill_shortages(date: str, shift: str = "day"):
         absent_person_ids=sched_doc["absent_person_ids"],
         overrides=overrides,
         unassigned_keys=list(unassigned),
+        required_overrides=dict(sched_doc.get("required_overrides", {}) or {}),
     )
     return await generate_schedule(req)
 
@@ -624,7 +697,8 @@ async def fill_shortages(date: str, shift: str = "day"):
 @api_router.post("/schedule/{date}/adjust")
 async def adjust_cell(date: str, payload: dict):
     """Manual adjustment: swap or unassign a person in a cell.
-    payload = {shift, cell_key, person_ids: [list], action: 'set' | 'clear', required?: int}"""
+    payload = {shift, cell_key, person_ids: [list], action: 'set' | 'clear', required?: int}
+    Note: action='set' locks the cell to EXACTLY the given person_ids (no autofill)."""
     shift = payload.get("shift", "day")
     cell_key = payload.get("cell_key")
     action = payload.get("action", "set")
@@ -643,7 +717,8 @@ async def adjust_cell(date: str, payload: dict):
         unassigned.add(cell_key)
     else:
         overrides[cell_key] = person_ids
-        unassigned.discard(cell_key)
+        # Lock user's exact list — no auto-fill, no auto-remove
+        unassigned.add(cell_key)
     if new_required is not None:
         required_overrides[cell_key] = max(0, int(new_required))
     req = ScheduleRequest(
@@ -723,42 +798,46 @@ async def absenteeism_report(start: str, end: str, only_logged: bool = False):
     p_by_id = {p["id"]: p for p in persons}
 
     wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Absenteeism"
-    headers = ["Date", "Shift", "Absent Count", "Names", "Logged At"]
-    for ci, h in enumerate(headers, 1):
-        ws.cell(row=1, column=ci, value=h).font = Font(bold=True)
-    for ri, s in enumerate(docs, 2):
-        absent_ids = s.get("absent_person_ids", []) or []
-        names = ", ".join(
-            _person_full_name(p_by_id[pid]) for pid in absent_ids if pid in p_by_id
-        ) or ""
-        ws.cell(row=ri, column=1, value=s["date"])
-        ws.cell(row=ri, column=2, value=s.get("shift", "day"))
-        ws.cell(row=ri, column=3, value=len(absent_ids))
-        ws.cell(row=ri, column=4, value=names)
-        ws.cell(row=ri, column=5, value=s.get("logged_at") or "")
-    for col_letter, width in [("A", 12), ("B", 10), ("C", 14), ("D", 80), ("E", 30)]:
-        ws.column_dimensions[col_letter].width = width
 
-    # Second sheet: per-person absenteeism totals
-    ws2 = wb.create_sheet("By Person")
+    # PRIMARY sheet: cumulative per-person totals with dates
+    ws = wb.active
+    ws.title = "By Person"
     counts: Dict[str, int] = defaultdict(int)
     dates_by_person: Dict[str, List[str]] = defaultdict(list)
     for s in docs:
         for pid in s.get("absent_person_ids", []) or []:
             counts[pid] += 1
-            dates_by_person[pid].append(s["date"])
-    ws2.cell(row=1, column=1, value="Name").font = Font(bold=True)
-    ws2.cell(row=1, column=2, value="Absent Days").font = Font(bold=True)
-    ws2.cell(row=1, column=3, value="Dates").font = Font(bold=True)
+            dates_by_person[pid].append(f"{s['date']} ({s.get('shift','day')})")
+    ws.cell(row=1, column=1, value="Name").font = Font(bold=True)
+    ws.cell(row=1, column=2, value="Employee Type").font = Font(bold=True)
+    ws.cell(row=1, column=3, value="Total Absent Days").font = Font(bold=True)
+    ws.cell(row=1, column=4, value="Dates Absent").font = Font(bold=True)
     ranked = sorted(counts.items(), key=lambda x: (-x[1], p_by_id.get(x[0], {}).get("name", "")))
     for ri, (pid, cnt) in enumerate(ranked, 2):
         p = p_by_id.get(pid)
-        ws2.cell(row=ri, column=1, value=_person_full_name(p) if p else pid)
-        ws2.cell(row=ri, column=2, value=cnt)
-        ws2.cell(row=ri, column=3, value=", ".join(dates_by_person[pid]))
-    for col_letter, width in [("A", 28), ("B", 12), ("C", 80)]:
+        ws.cell(row=ri, column=1, value=_person_full_name(p) if p else pid)
+        ws.cell(row=ri, column=2, value=(p or {}).get("employee_type", ""))
+        ws.cell(row=ri, column=3, value=cnt)
+        ws.cell(row=ri, column=4, value=", ".join(dates_by_person[pid]))
+    for col_letter, width in [("A", 28), ("B", 20), ("C", 18), ("D", 90)]:
+        ws.column_dimensions[col_letter].width = width
+
+    # Secondary sheet: per-date detail
+    ws2 = wb.create_sheet("By Date")
+    headers = ["Date", "Shift", "Absent Count", "Names", "Logged At"]
+    for ci, h in enumerate(headers, 1):
+        ws2.cell(row=1, column=ci, value=h).font = Font(bold=True)
+    for ri, s in enumerate(docs, 2):
+        absent_ids = s.get("absent_person_ids", []) or []
+        names = ", ".join(
+            _person_full_name(p_by_id[pid]) for pid in absent_ids if pid in p_by_id
+        ) or ""
+        ws2.cell(row=ri, column=1, value=s["date"])
+        ws2.cell(row=ri, column=2, value=s.get("shift", "day"))
+        ws2.cell(row=ri, column=3, value=len(absent_ids))
+        ws2.cell(row=ri, column=4, value=names)
+        ws2.cell(row=ri, column=5, value=s.get("logged_at") or "")
+    for col_letter, width in [("A", 12), ("B", 10), ("C", 14), ("D", 80), ("E", 30)]:
         ws2.column_dimensions[col_letter].width = width
 
     buf = io.BytesIO()
