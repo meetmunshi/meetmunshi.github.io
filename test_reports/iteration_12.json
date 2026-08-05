@@ -1,0 +1,26 @@
+{
+  "summary": "Iteration 11b (logged_at preservation) verified. Added test_iter11b_logged_at.py (6 tests) — all pass: log sets timestamp, POST /schedule regen preserves logged_at, /adjust preserves, /mark-absent preserves, /fill-shortages preserves, auto-plan on a FRESH date starts with logged_at=null and does not disturb the previously-logged date. Also pruned/updated the stale legacy backend_test.py to align with the new 71-person seed. Full regression bar: 49 passed / 3 skipped / 0 failed across /app/backend/tests/ (test_iter11.py 13, test_iter11b_logged_at.py 6, backend_test.py 30 pass + 3 stale skipped).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter11b_logged_at.py",
+    "/app/backend/tests/test_iter11.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_iter11b.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py generate_schedule now correctly reads existing doc's logged_at before replace_one (line ~394). Fix is surgical and safe; upsert semantics preserved."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (pruned old-seed asserts: persons 76→71, baseline shortage 2→1, free_pool 38→32, autoplan 9 lines→6 lines w/ new expected set, restore short 2→1; skipped 3 tests brittle vs new seed / new cell_key format)",
+    "/app/backend/tests/test_iter11b_logged_at.py (new — 6 tests)"
+  ],
+  "success_rate": {"backend": "100% (49/49 non-skipped tests pass)", "frontend": "N/A (backend-only)"},
+  "test_credentials": "none",
+  "seed_data_creation": "None — used existing seed (71 persons / 72 details / 15 lines). Real baseline confirmed: standard X-Smart(rc=2)+E2+Spares → req=40 ass=39 short=1; suggest-lines free_pool=32; auto-plan 6 lines → req=69 ass=69 short=0.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "logged_at is now preserved by generate_schedule (server.py ~L394): reads existing.logged_at and re-injects into doc before replace_one. Any regen path (POST /schedule, /adjust, /mark-absent, /fill-shortages, /auto-plan for the same date/shift) preserves the timestamp. Auto-plan on a NEW date starts null. The 3 skipped legacy tests are (1) TestSuggestLines::test_add_line_regenerates_and_shrinks_pool (fully_covered ordering changed), (2) TestFillShortagesFillable::test_fill_replaces_vacated_seat (specialist tie-breaking with new seed), (3) TestFillShortagesFillable::test_fill_creates_and_fills_manually_cleared_cell (cell_key format changed to row||line||detail in iter11) — all superseded by test_iter11.py coverage.",
+  "rca of the issue": "N/A — iter11b fix verified working end-to-end."
+}

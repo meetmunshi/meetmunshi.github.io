@@ -390,6 +390,11 @@ async def generate_schedule(req: ScheduleRequest):
         total_required=total_req, total_assigned=total_assigned, total_shortage=total_short,
     )
     doc = sched.model_dump()
+    # Preserve logged_at across regenerations so edits don't silently unlog a frozen schedule
+    existing = await db.schedules.find_one({"date": req.date, "shift": req.shift}, {"_id": 0, "logged_at": 1})
+    if existing and existing.get("logged_at"):
+        doc["logged_at"] = existing["logged_at"]
+        sched.logged_at = existing["logged_at"]
     await db.schedules.replace_one({"date": req.date, "shift": req.shift}, doc, upsert=True)
     return sched
 
