@@ -21,6 +21,8 @@ export const logSchedule = (date, shift = "day") =>
     api.post(`/schedule/${date}/log`, null, { params: { shift } }).then((r) => r.data);
 export const absenteeismReportUrl = (start, end, onlyLogged = false) =>
     `${API}/reports/absenteeism?start=${start}&end=${end}&only_logged=${onlyLogged}`;
+export const suggestReplacement = (date, cellKey, shift = "day", top = 3) =>
+    api.get(`/schedule/${date}/suggest-replacement`, { params: { cell_key: cellKey, shift, top } }).then((r) => r.data);
 export const fillShortages = (date, shift = "day") =>
     api.post(`/schedule/${date}/fill-shortages`, null, { params: { shift } }).then((r) => r.data);
 export const suggestLines = (date, shift = "day") =>

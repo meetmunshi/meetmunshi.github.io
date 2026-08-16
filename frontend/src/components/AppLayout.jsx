@@ -8,6 +8,7 @@ import {
     BarChart3,
     CalendarDays,
     Flame,
+    BookOpen,
 } from "lucide-react";
 
 const navItems = [
@@ -17,6 +18,7 @@ const navItems = [
     { to: "/analytics", icon: BarChart3, label: "Analytics", testid: "nav-analytics" },
     { to: "/heatmap", icon: Flame, label: "Heatmap", testid: "nav-heatmap" },
     { to: "/persons", icon: Users, label: "Persons", testid: "nav-persons" },
+    { to: "/sop", icon: BookOpen, label: "SOP", testid: "nav-sop" },
     { to: "/upload", icon: Upload, label: "Upload", testid: "nav-upload" },
 ];
 

@@ -12,6 +12,7 @@ import {
     generateSchedule,
     markAbsentFromBoard,
     logSchedule,
+    suggestReplacement,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,9 +41,16 @@ import {
     Plus,
     Lock,
     CheckCircle2,
+    Wand2,
 } from "lucide-react";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
+
+// Fixed row-name display order (case-insensitive). Anything else appears after in first-seen order.
+const ROW_ORDER = [
+    "p&c assembly", "sub assembly - 1", "sub assembly - 2", "sub assembly - 3",
+    "frame", "testing", "pre-packing", "spyder", "trolley",
+];
 
 // Small "support" lines merged into one rightmost column
 const SUPPORT_LINES = ["Monkey", "KK", "Spares", "Vehicle", "Crimping", "OS", "5S+Others"];
@@ -189,6 +197,16 @@ export default function BoardPage() {
             const k = a.row_name + "||" + a.line_key;
             if (!mtx[k]) mtx[k] = [];
             mtx[k].push(a);
+        });
+        // Apply fixed display order: preferred first, then remainder in first-seen order
+        const rank = (name) => {
+            const idx = ROW_ORDER.indexOf(String(name).toLowerCase().trim());
+            return idx === -1 ? 999 : idx;
+        };
+        rns.sort((a, b) => {
+            const ra = rank(a), rb = rank(b);
+            if (ra !== rb) return ra - rb;
+            return rns.indexOf(a) - rns.indexOf(b);
         });
 
         // Support column items: one entry per small line
@@ -519,8 +537,18 @@ export default function BoardPage() {
                                         );
                                     }
                                     const totalReq = items.reduce((s, a) => s + a.required, 0);
-                                    const allIds = items.flatMap((a) => a.assigned_person_ids);
-                                    const allNames = items.flatMap((a) => a.assigned_person_names);
+                                    // Dedupe person IDs across sub-details (safety — should already be unique per invariant)
+                                    const seenPid = new Set();
+                                    const allIds = [];
+                                    const allNames = [];
+                                    items.forEach((a) => {
+                                        a.assigned_person_ids.forEach((pid, i) => {
+                                            if (seenPid.has(pid)) return;
+                                            seenPid.add(pid);
+                                            allIds.push(pid);
+                                            allNames.push(a.assigned_person_names[i]);
+                                        });
+                                    });
                                     const totalShort = items.reduce((s, a) => s + a.shortage, 0);
                                     const shortage = totalShort > 0;
                                     const openCellEdit = () => openEdit(items.length === 1 ? items[0] : items);
@@ -583,6 +611,7 @@ export default function BoardPage() {
                                                     key={s.line}
                                                     item={s}
                                                     onEdit={(a) => openEdit(a)}
+                                                    onQuickAbsent={handleQuickAbsent}
                                                 />
                                             ))}
                                         </div>
@@ -760,6 +789,8 @@ export default function BoardPage() {
                             persons={persons}
                             personLocations={personLocations}
                             currentCellKey={`${editCell.current.row_name}||${editCell.current.line_key}||${editCell.current.detail}`}
+                            date={date}
+                            shift={shift}
                             absentIds={new Set(schedule.absent_person_ids || [])}
                             onSave={savePicks}
                             onClear={clearCell}
@@ -774,11 +805,12 @@ export default function BoardPage() {
 
 function PersonPicker({
     detail, required, initialIds, persons, personLocations, currentCellKey,
-    absentIds, onSave, onClear, onCancel,
+    date, shift, absentIds, onSave, onClear, onCancel,
 }) {
     const [picks, setPicks] = useState(new Set(initialIds));
     const [search, setSearch] = useState("");
     const [reqOverride, setReqOverride] = useState(required);
+    const [suggestions, setSuggestions] = useState(null);
 
     const eligible = useMemo(() => {
         const q = search.trim().toLowerCase();
@@ -796,16 +828,86 @@ function PersonPicker({
         setPicks(ns);
     };
 
+    const runSuggest = async () => {
+        try {
+            const s = await suggestReplacement(date, currentCellKey, shift, 3);
+            setSuggestions(s);
+            // Auto-tick the top free candidates up to remaining need
+            const need = Math.max(0, reqOverride - picks.size);
+            if (need > 0 && s.free.length > 0) {
+                const ns = new Set(picks);
+                s.free.slice(0, need).forEach((c) => ns.add(c.id));
+                setPicks(ns);
+            }
+        } catch (e) {
+            /* silent */
+        }
+    };
+
     return (
         <div className="space-y-3">
-            <input
-                type="text"
-                placeholder="Search skilled staff…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                data-testid="edit-search"
-                className="w-full bg-[#0a0a0a] border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#3B6AB8]"
-            />
+            <div className="flex items-center gap-2">
+                <input
+                    type="text"
+                    placeholder="Search skilled staff…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    data-testid="edit-search"
+                    className="flex-1 bg-[#0a0a0a] border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#3B6AB8]"
+                />
+                <button
+                    type="button"
+                    onClick={runSuggest}
+                    data-testid="edit-suggest-btn"
+                    className="inline-flex items-center gap-1 border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-200 uppercase tracking-widest text-[10px] px-3 py-2 font-bold"
+                >
+                    <Wand2 className="w-3.5 h-3.5" /> Suggest
+                </button>
+            </div>
+            {suggestions && (
+                <div className="border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs">
+                    <div className="text-[10px] uppercase tracking-widest text-emerald-300 mb-1">
+                        Recommended · {suggestions.free.length} free, {suggestions.borrowable.length} borrowable
+                    </div>
+                    {suggestions.free.length === 0 && suggestions.borrowable.length === 0 && (
+                        <div className="text-zinc-500 italic">No candidates — this skill needs training investment.</div>
+                    )}
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                        {suggestions.free.map((c) => (
+                            <button
+                                key={c.id}
+                                type="button"
+                                onClick={() => toggle(c.id)}
+                                data-testid={`suggest-free-${c.id}`}
+                                className={`text-[11px] border px-2 py-0.5 ${
+                                    picks.has(c.id)
+                                        ? "border-emerald-400 bg-emerald-500/20 text-white"
+                                        : "border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/10"
+                                }`}
+                                title={`${c.skills} skills · free`}
+                            >
+                                ✓ {c.name}
+                            </button>
+                        ))}
+                        {suggestions.borrowable.map((c) => (
+                            <button
+                                key={c.id}
+                                type="button"
+                                onClick={() => toggle(c.id)}
+                                data-testid={`suggest-borrow-${c.id}`}
+                                className={`text-[11px] border px-2 py-0.5 ${
+                                    picks.has(c.id)
+                                        ? "border-amber-400 bg-amber-500/20 text-white"
+                                        : "border-amber-500/40 text-amber-200 hover:bg-amber-500/10"
+                                }`}
+                                title={`Currently on ${c.current.line_key} · ${c.current.row_name}`}
+                            >
+                                ↺ {c.name}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
             <div className="text-[10px] uppercase tracking-widest text-zinc-500 flex items-center gap-3">
                 <span>Picked {picks.size}</span>
                 <span className="flex items-center gap-1">
@@ -975,7 +1077,7 @@ function SuggestionRow({ s, onAdd }) {
     );
 }
 
-function SupportBlock({ item, onEdit }) {
+function SupportBlock({ item, onEdit, onQuickAbsent }) {
     if (!item.planned) {
         return (
             <div
@@ -999,26 +1101,35 @@ function SupportBlock({ item, onEdit }) {
             {item.assignments.map((a) => {
                 const shortage = a.shortage > 0;
                 return (
-                    <button
-                        type="button"
+                    <div
                         key={a.line_key + "||" + a.row_name + "||" + a.detail}
                         onClick={() => onEdit(a)}
-                        className={`w-full text-left mt-1.5 px-2 py-1.5 group ${
+                        className={`w-full text-left mt-1.5 px-2 py-1.5 group cursor-pointer ${
                             shortage
                                 ? "border border-red-500 bg-red-950/30"
                                 : "hover:bg-white/5 border border-transparent"
                         }`}
                         data-testid={`support-cell-${a.line}-${a.row_name}`}
                     >
-                        <div className="text-[10px] uppercase tracking-widest text-zinc-500">
-                            {a.row_name.toUpperCase()}
+                        <div className="text-[10px] uppercase tracking-widest text-zinc-500 flex items-center justify-between">
+                            <span>{a.row_name.toUpperCase()}</span>
+                            <Pencil className="w-3 h-3 text-zinc-600 opacity-0 group-hover:opacity-100 no-print" />
                         </div>
                         {a.assigned_person_names.length === 0 ? (
                             <div className="text-sm italic text-zinc-600">unassigned</div>
                         ) : (
                             a.assigned_person_names.map((n, i) => (
-                                <div key={i} className="text-sm font-semibold text-white leading-snug">
-                                    {n}
+                                <div key={i} className="text-sm font-semibold text-white leading-snug flex items-center justify-between group/name">
+                                    <span>{n}</span>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); onQuickAbsent(a.assigned_person_ids[i], n); }}
+                                        title="Mark absent from today"
+                                        className="ml-2 opacity-0 group-hover/name:opacity-100 text-red-400 hover:text-red-300 no-print"
+                                        data-testid={`support-quick-absent-${a.assigned_person_ids[i]}`}
+                                    >
+                                        <UserX className="w-3 h-3" />
+                                    </button>
                                 </div>
                             ))
                         )}
@@ -1027,7 +1138,7 @@ function SupportBlock({ item, onEdit }) {
                                 Short by {a.shortage}
                             </div>
                         )}
-                    </button>
+                    </div>
                 );
             })}
         </div>

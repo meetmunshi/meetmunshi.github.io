@@ -8,6 +8,7 @@ import UploadPage from "@/pages/UploadPage";
 import AnalyticsPage from "@/pages/AnalyticsPage";
 import HistoryPage from "@/pages/HistoryPage";
 import HeatmapPage from "@/pages/HeatmapPage";
+import SopPage from "@/pages/SopPage";
 
 function App() {
     return (
@@ -21,6 +22,7 @@ function App() {
                         <Route path="/analytics" element={<AnalyticsPage />} />
                         <Route path="/heatmap" element={<HeatmapPage />} />
                         <Route path="/persons" element={<PersonsPage />} />
+                        <Route path="/sop" element={<SopPage />} />
                         <Route path="/upload" element={<UploadPage />} />
                     </Route>
                 </Routes>

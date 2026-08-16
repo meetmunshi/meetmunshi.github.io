@@ -577,10 +577,8 @@ async def suggest_lines(date: str, shift: str = "day"):
 @api_router.post("/schedule/{date}/fill-shortages", response_model=Schedule)
 async def fill_shortages(date: str, shift: str = "day"):
     """Auto-assign best available skilled candidates to every shortage cell.
-    Pass 1: use FREE pool (not assigned anywhere).
-    Pass 2: BORROW from cells that currently have MORE people than their required count.
-    Pass 3: SWAP — if a shortage still exists and a skilled person is assigned elsewhere but a
-              qualified replacement is free for that other cell, chain the swap."""
+    Iterates through 3 passes (FREE pool → BORROW from excess → SWAP chain), then loops
+    the whole thing until no more shortages can be filled (fixed point)."""
     sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
     if not sched_doc:
         raise HTTPException(404, "Schedule not found")
@@ -592,7 +590,6 @@ async def fill_shortages(date: str, shift: str = "day"):
     overrides = dict(sched_doc.get("overrides", {}) or {})
     unassigned = set(sched_doc.get("unassigned_keys", []) or [])
 
-    # Work on a mutable copy of the current cell state
     assignments = [dict(a) for a in sched_doc["assignments"]]
     for a in assignments:
         a["assigned_person_ids"] = list(a["assigned_person_ids"])
@@ -602,7 +599,7 @@ async def fill_shortages(date: str, shift: str = "day"):
 
     def persist(a: dict):
         overrides[cell_key(a)] = a["assigned_person_ids"]
-        unassigned.add(cell_key(a))  # lock exact list, no auto-fill
+        unassigned.add(cell_key(a))
 
     def is_short(a: dict) -> bool:
         return len(a["assigned_person_ids"]) < a["required"]
@@ -616,28 +613,35 @@ async def fill_shortages(date: str, shift: str = "day"):
             u.update(a["assigned_person_ids"])
         return u
 
-    # --- Pass 1: FREE pool ---
-    for cell in sorted(assignments, key=lambda a: (a["required"] - len(a["assigned_person_ids"]))):
-        if not is_short(cell):
-            continue
+    def scarcity(a: dict) -> int:
+        """How rare is this skill? Fewer = process first."""
+        return sum(
+            1 for p in persons
+            if bool(p.get("skills", {}).get(a["detail"])) and p["id"] not in absent_set
+        )
+
+    def try_fill_from_free(cell: dict) -> bool:
         need = cell["required"] - len(cell["assigned_person_ids"])
+        if need <= 0:
+            return False
         excluded = absent_set | used_ids()
         picks = _pick_specialists(cell["detail"], need, persons, skill_totals, excluded)
-        if picks:
-            cell["assigned_person_ids"].extend(p["id"] for p in picks)
-            persist(cell)
+        if not picks:
+            return False
+        cell["assigned_person_ids"].extend(p["id"] for p in picks)
+        persist(cell)
+        return True
 
-    # --- Pass 2: BORROW from excess ---
-    for cell in assignments:
-        if not is_short(cell):
-            continue
+    def try_borrow(cell: dict) -> bool:
+        made_progress = False
         for donor in assignments:
-            if donor is cell:
+            if donor is cell or excess_count(donor) <= 0:
                 continue
-            if excess_count(donor) <= 0:
-                continue
-            # Find someone in donor with the shortage cell's skill
             for pid in list(donor["assigned_person_ids"]):
+                if not is_short(cell):
+                    return made_progress
+                if excess_count(donor) <= 0:
+                    break
                 p = person_by_id.get(pid)
                 if not p or not bool(p.get("skills", {}).get(cell["detail"])):
                     continue
@@ -645,43 +649,47 @@ async def fill_shortages(date: str, shift: str = "day"):
                 cell["assigned_person_ids"].append(pid)
                 persist(donor)
                 persist(cell)
-                if not is_short(cell):
-                    break
-            if not is_short(cell):
-                break
+                made_progress = True
+        return made_progress
 
-    # --- Pass 3: SWAP CHAIN — move X from another cell if a free person can replace X ---
-    for cell in assignments:
-        if not is_short(cell):
-            continue
+    def try_swap_chain(cell: dict) -> bool:
+        made_progress = False
         for donor in assignments:
             if donor is cell or excess_count(donor) > 0:
                 continue
             for pid in list(donor["assigned_person_ids"]):
+                if not is_short(cell):
+                    return made_progress
                 p = person_by_id.get(pid)
                 if not p or not bool(p.get("skills", {}).get(cell["detail"])):
                     continue
-                # Can we free `pid` by replacing them at `donor` with someone from the free pool?
-                excluded = absent_set | used_ids()
-                excluded.discard(pid)   # pretend they're free during search
-                replacements = _pick_specialists(
-                    donor["detail"], 1, persons, skill_totals, excluded,
-                )
-                if not replacements:
+                excluded = (absent_set | used_ids()) - {pid}
+                replacements = _pick_specialists(donor["detail"], 1, persons, skill_totals, excluded)
+                if not replacements or replacements[0]["id"] == pid:
                     continue
-                rep = replacements[0]
-                if rep["id"] == pid:
-                    continue
-                # Do the chain
                 donor["assigned_person_ids"].remove(pid)
-                donor["assigned_person_ids"].append(rep["id"])
+                donor["assigned_person_ids"].append(replacements[0]["id"])
                 cell["assigned_person_ids"].append(pid)
                 persist(donor)
                 persist(cell)
-                if not is_short(cell):
-                    break
-            if not is_short(cell):
-                break
+                made_progress = True
+        return made_progress
+
+    # Loop until fixed point (bounded to avoid infinite loops)
+    for _ in range(5):
+        progressed = False
+        short_cells = sorted([a for a in assignments if is_short(a)], key=scarcity)
+        if not short_cells:
+            break
+        for cell in short_cells:
+            if try_fill_from_free(cell):
+                progressed = True
+            if is_short(cell) and try_borrow(cell):
+                progressed = True
+            if is_short(cell) and try_swap_chain(cell):
+                progressed = True
+        if not progressed:
+            break
 
     req = ScheduleRequest(
         date=date, shift=shift,
@@ -692,6 +700,72 @@ async def fill_shortages(date: str, shift: str = "day"):
         required_overrides=dict(sched_doc.get("required_overrides", {}) or {}),
     )
     return await generate_schedule(req)
+
+
+@api_router.get("/schedule/{date}/suggest-replacement")
+async def suggest_replacement(date: str, cell_key: str, shift: str = "day", top: int = 3):
+    """Suggest top-N replacement candidates for a specific cell.
+    cell_key format: 'row_name||line_key||detail'"""
+    sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
+    if not sched_doc:
+        raise HTTPException(404, "Schedule not found")
+    parts = cell_key.split("||")
+    if len(parts) < 3:
+        raise HTTPException(400, "cell_key must be 'row_name||line_key||detail'")
+    row_name, line_key, detail = parts[0], parts[1], "||".join(parts[2:])
+
+    target = next(
+        (a for a in sched_doc["assignments"]
+         if a["row_name"] == row_name and a["line_key"] == line_key and a["detail"] == detail),
+        None,
+    )
+    if not target:
+        raise HTTPException(404, "Cell not found")
+
+    persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
+    skill_totals = _skill_totals(persons)
+    absent_set = set(sched_doc.get("absent_person_ids", []))
+
+    used = set()
+    for a in sched_doc["assignments"]:
+        if a is target:
+            continue
+        used.update(a["assigned_person_ids"])
+
+    excluded = absent_set | used | set(target["assigned_person_ids"])
+    free = _pick_specialists(detail, top, persons, skill_totals, excluded)
+
+    def location_of(pid: str) -> Optional[dict]:
+        for a in sched_doc["assignments"]:
+            if pid in a["assigned_person_ids"]:
+                return {"row_name": a["row_name"], "line_key": a["line_key"], "detail": a["detail"]}
+        return None
+
+    borrowable = []
+    for p in persons:
+        if p["id"] in absent_set or p["id"] in {c["id"] for c in free}:
+            continue
+        if p["id"] in target["assigned_person_ids"]:
+            continue
+        if not bool(p.get("skills", {}).get(detail)):
+            continue
+        loc = location_of(p["id"])
+        if loc:
+            borrowable.append({"person": p, "current": loc})
+    borrowable.sort(key=lambda x: skill_totals.get(x["person"]["id"], 0))
+
+    return {
+        "cell": {"row_name": row_name, "line_key": line_key, "detail": detail, "required": target["required"]},
+        "free": [
+            {"id": p["id"], "name": _person_full_name(p), "skills": skill_totals.get(p["id"], 0)}
+            for p in free
+        ],
+        "borrowable": [
+            {"id": b["person"]["id"], "name": _person_full_name(b["person"]),
+             "skills": skill_totals.get(b["person"]["id"], 0), "current": b["current"]}
+            for b in borrowable[:top]
+        ],
+    }
 
 
 @api_router.post("/schedule/{date}/adjust")

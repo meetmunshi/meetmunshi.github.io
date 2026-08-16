@@ -57,25 +57,36 @@ def sk_schedule():
 
 
 class TestSK300FrameMultiDetail:
-    def test_sk300_frame_has_4_details_summing_to_6(self, sk_schedule):
+    def test_sk300_frame_has_multiple_details(self, sk_schedule):
+        # Derive expected count/sum from /api/lines to be seed-file-agnostic
+        r_lines = requests.get(f"{API}/lines", timeout=15).json()
+        sk_details = next(l["details"] for l in r_lines["lines"] if l["line"] == "SK300")
+        expected_frame_details = [d for d in sk_details if (d.get("row_name") or "").lower() == "frame"]
+        expected_total_req = sum(d["persons_required"] for d in expected_frame_details)
+
         frame_cells = [
             a for a in sk_schedule["assignments"]
             if a["line_key"] == "SK300" and a["row_name"] == "frame"
         ]
-        assert len(frame_cells) == 4, (
-            f"expected 4 SK300 frame sub-details, got {len(frame_cells)}: "
-            f"{[c['detail'] for c in frame_cells]}"
+        assert len(frame_cells) == len(expected_frame_details), (
+            f"expected {len(expected_frame_details)} SK300 frame sub-details, got {len(frame_cells)}"
         )
-        total_req = sum(c["required"] for c in frame_cells)
-        assert total_req == 6, f"expected SK300 frame total required=6, got {total_req}"
+        total_req = sum(a["required"] for a in frame_cells)
+        assert total_req == expected_total_req, (
+            f"expected SK300 frame total required={expected_total_req}, got {total_req}"
+        )
 
-    def test_gx300_frame_sums_to_2(self, sk_schedule):
+    def test_gx300_frame_sums_correctly(self, sk_schedule):
+        r_lines = requests.get(f"{API}/lines", timeout=15).json()
+        gx_details = next(l["details"] for l in r_lines["lines"] if l["line"] == "GX300")
+        expected = [d for d in gx_details if (d.get("row_name") or "").lower() == "frame"]
+        expected_total = sum(d["persons_required"] for d in expected)
         cells = [
             a for a in sk_schedule["assignments"]
             if a["line_key"] == "GX300" and a["row_name"] == "frame"
         ]
-        assert len(cells) == 2, f"expected 2 GX300 frame details, got {len(cells)}"
-        assert sum(c["required"] for c in cells) == 2
+        assert len(cells) == len(expected), f"expected {len(expected)} GX300 frame details, got {len(cells)}"
+        assert sum(c["required"] for c in cells) == expected_total
 
     def test_no_duplicate_person(self, sk_schedule):
         seen = {}

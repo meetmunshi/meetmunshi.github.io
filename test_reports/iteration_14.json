@@ -1,0 +1,27 @@
+{
+  "summary": "Iteration 13 verified end-to-end. Created /app/backend/tests/test_iter13.py (8 tests, ALL PASSING) covering: (1) /api/stats persons=71/details=72/lines=15, (2) Monkey line has 'Monkey X-Smart' (row_name='monkey xx') and 'Monkey Element 2' (row_name='monkey e2'), (3) POST /api/schedule for 2026-08-16 day XSmart+E2+SK300 yields total_required=38 total_assigned=38 total_shortage=0 with no duplicate person assignments, (4) GET /api/schedule/{date}/suggest-replacement returns {cell, free[<=3], borrowable[<=3]} with proper shape (each free={id,name,skills}, each borrowable also has current={row_name,line_key,detail}); 400 for malformed cell_key, 404 for unknown, (5) fill-shortages fixed-point loop reduces (does not increase) shortage after marking 4 assignees absent. Frontend: /sop renders sop-step-01..08 + Do/Don't, sidebar nav order [setup, board, history, analytics, heatmap, persons, sop, upload] confirming nav-sop between nav-persons and nav-upload. Board /board?date=2026-08-16&shift=day row-header data-testids EXACTLY match spec ['p&c assembly','sub assembly - 1','sub assembly - 2','sub assembly - 3','frame','testing','pre-packing','spyder','trolley']. Edit dialog exposes edit-suggest-btn; clicking calls API and renders 3 suggest-free-* and 3 suggest-borrow-* chips. Support cells (support-cell-Monkey-monkey xx, support-cell-Monkey-monkey e2, support-cell-Vehicle-store vehicle, etc.) each contain a hover-pencil container ([class*='opacity-0'][class*='group-hover']) and a support-quick-absent-<id> element per assignee.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter13.py",
+    "/app/test_reports/pytest/pytest_iter13.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py suggest_replacement (L705-768) properly excludes absent + already-used + already-in-target persons from BOTH free and borrowable pools, and dedupes borrowable against free via id comparison. Sorting borrowable by ascending skill_totals (scarcity donor logic) is correct — cheapest-to-lose people surface first.",
+    "BoardPage.jsx ROW_ORDER (L50-53) + display sort (L203) uses indexOf → sub-assembly-3 now sits between sub-2 and frame as required. Rows not in ROW_ORDER retain first-seen order (append after).",
+    "PersonPicker Suggest button (L861) is disabled when cell_key is falsy, avoiding a bad API call on absent-row cell edits (defensive).",
+    "backend/tests/test_iter11.py has 2 stale-data failures (SK300 frame total required 6→7 and GX300 frame 2→3) due to the NEW seed uploaded — these tests hardcoded old counts. Not a regression; suggest either update the assertions to derive counts from /api/lines dynamically or add a fixture to load the OLD workbook for those cases.",
+    "server.py fill_shortages fixed-point loop (L578+) — with max_iterations=5 the algorithm is well-bounded; scarcity-first sorting is the correct heuristic. Verified empirically: after 4 targeted absences the shortage did NOT grow post-fill."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter13.py (new — 8 tests, all passing)"
+  ],
+  "success_rate": {"backend": "100% (8/8 iter13; overall 62/64 non-skipped — 2 pre-existing iter11 tests stale-data failed)", "frontend": "100% (all iter13 UI assertions pass)"},
+  "test_credentials": "none",
+  "seed_data_creation": "None. Used the newly re-uploaded seed (71 persons / 72 details / 15 lines). Generated schedule for 2026-08-16 day (X-Smart+E2+SK300 → req=38/ass=38/short=0) as the iter13 baseline.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter13 verified. Note: test_iter11.py has 2 test failures ('test_sk300_frame_has_4_details_summing_to_6' expects 6 got 7; 'test_gx300_frame_sums_to_2' expects 2 got 3). These are NOT regressions — they were written against the previous Excel and became stale after the new upload. Main agent should either (a) parametrize those assertions off /api/lines, or (b) mark them as data-specific. iter13 file uses REACT_APP_BACKEND_URL loaded via python-dotenv (like iter12). All Iter13 delta behavior — SOP page, suggest-replacement endpoint & UI chips, row order, support ops pencil+quick-absent, Monkey subtasks — is working exactly per spec.",
+  "rca of the issue": "N/A — all iter13 acceptance criteria pass."
+}
