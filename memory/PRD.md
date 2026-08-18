@@ -40,6 +40,7 @@
 - 2026-02 (v5): Board Search & Filter bar — search worker by name, filter by skill or line; matching names get a yellow highlight, non-matches dimmed (matrix cells, Support Ops, Absent, Unassigned). Setup default priority for "Spares" line forced to 1.
 - 2026-02 (v6): Mobile Board — desktop matrix hidden below md; new card view stacks a card per active line (with per-area rows, shortage flags, tap-to-assign) plus Support Ops, Absent (with Late Arrival), and Unassigned sections. Toolbar buttons collapse to icon-only for non-essential actions; filter bar wraps across rows on small screens.
 - 2026-02 (v7): Fill Shortages — replaced greedy 3-pass algorithm with global maximum bipartite matching (Kuhn's augmenting paths). Seeded with current assignments so reshuffles only happen when they demonstrably increase total filled seats. Preview diff still lists every added/removed change so the manager can review the full reshuffle before confirming.
+- 2026-02 (v8): Analytics page rebuilt around three monthly insights — Top Absenteeism (with per-worker absence dates), Lines Hit by Absence (shortage-days on absentee days), and Line Utilisation (days-run per line vs total scheduled days). New `GET /api/analytics/monthly?month=YYYY-MM` endpoint returns all three plus a `months_available` list feeding the month selector in the header.
 
 ## Testing
 - Iteration 2 test report: 100% backend + frontend pass, all 18 scenarios (including priority ordering proof, run duplication with no overlap, adjust set/clear behavior, shift isolation, export filename).

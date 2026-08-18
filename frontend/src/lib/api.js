@@ -44,5 +44,7 @@ export const uploadExcel = (file) => {
 };
 export const exportScheduleUrl = (date, shift = "day") =>
     `${API}/export/${date}?shift=${shift}`;
+export const fetchMonthlyAnalytics = (month) =>
+    api.get("/analytics/monthly", { params: month ? { month } : {} }).then((r) => r.data);
 export const fetchShortageAnalytics = (days = 30) =>
     api.get("/analytics/shortage", { params: { days } }).then((r) => r.data);

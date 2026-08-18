@@ -1233,6 +1233,101 @@ async def shortage_analytics(days: int = 30):
     }
 
 
+@api_router.get("/analytics/monthly")
+async def monthly_analytics(month: Optional[str] = None):
+    """Three monthly insights: top absentees, lines suffering from absence, line utilisation.
+    month: 'YYYY-MM' (defaults to current month based on latest schedule date)."""
+    # Distinct months available (for the month selector)
+    all_dates = await db.schedules.distinct("date")
+    months_set = {d[:7] for d in all_dates if isinstance(d, str) and len(d) >= 7}
+    months_available = sorted(months_set, reverse=True)
+
+    if not month:
+        month = months_available[0] if months_available else datetime.now(timezone.utc).strftime("%Y-%m")
+
+    # Fetch schedules for month
+    start = f"{month}-01"
+    # naive next-month calc
+    y, m = int(month[:4]), int(month[5:7])
+    ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
+    end = f"{ny:04d}-{nm:02d}-01"
+
+    docs = await db.schedules.find(
+        {"date": {"$gte": start, "$lt": end}}, {"_id": 0}
+    ).sort("date", 1).to_list(500)
+
+    persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
+    p_by_id = {p["id"]: p for p in persons}
+
+    # --- 1) Top absentees
+    absentee_counts: Dict[str, int] = defaultdict(int)
+    absentee_dates: Dict[str, List[str]] = defaultdict(list)
+    for s in docs:
+        seen_today: set = set()  # de-dup within a date (same person absent day+evening etc.)
+        for pid in s.get("absent_person_ids", []):
+            key = (s["date"], pid)
+            if key in seen_today:
+                continue
+            seen_today.add(key)
+            absentee_counts[pid] += 1
+            absentee_dates[pid].append(s["date"])
+    top_absentees = []
+    for pid, cnt in sorted(absentee_counts.items(), key=lambda x: -x[1])[:10]:
+        p = p_by_id.get(pid)
+        top_absentees.append({
+            "person_id": pid,
+            "name": _person_full_name(p) if p else pid,
+            "count": cnt,
+            "dates": sorted(set(absentee_dates[pid])),
+        })
+
+    # --- 2) Lines suffering from absence: rank by shortage-days where absents ≥ 1
+    line_absence_days: Dict[str, int] = defaultdict(int)
+    line_absence_shortage: Dict[str, int] = defaultdict(int)
+    for s in docs:
+        if not s.get("absent_person_ids"):
+            continue
+        # Which lines had shortage on this day?
+        short_lines_today: Dict[str, int] = defaultdict(int)
+        for a in s.get("assignments", []):
+            if a.get("shortage", 0) > 0:
+                short_lines_today[a["line"]] += a["shortage"]
+        for line, tot in short_lines_today.items():
+            line_absence_days[line] += 1
+            line_absence_shortage[line] += tot
+
+    lines_hit_by_absence = [
+        {"line": line, "shortage_days": days, "shortage_total": line_absence_shortage[line]}
+        for line, days in sorted(line_absence_days.items(), key=lambda x: (-x[1], -line_absence_shortage[x[0]]))
+    ]
+
+    # --- 3) Line utilisation: days each line was scheduled
+    line_days: Dict[str, set] = defaultdict(set)
+    all_days: set = set()
+    for s in docs:
+        all_days.add(s["date"])
+        for cfg in s.get("line_configs", []):
+            line_days[cfg["line"]].add(s["date"])
+    days_with_schedule = len(all_days)
+    line_utilisation = [
+        {
+            "line": line,
+            "days_run": len(dates),
+            "utilisation_pct": round((len(dates) / days_with_schedule) * 100) if days_with_schedule else 0,
+        }
+        for line, dates in sorted(line_days.items(), key=lambda x: -len(x[1]))
+    ]
+
+    return {
+        "month": month,
+        "months_available": months_available,
+        "days_with_schedule": days_with_schedule,
+        "top_absentees": top_absentees,
+        "lines_hit_by_absence": lines_hit_by_absence,
+        "line_utilisation": line_utilisation,
+    }
+
+
 @api_router.get("/export/{date}")
 async def export_schedule(date: str, shift: str = "day"):
     sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
