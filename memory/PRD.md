@@ -37,6 +37,7 @@
 - 2026-07-16 (v2): row = row_name; priority + run_count; shift; absent bottom row; click-to-adjust manual override with persistence; Analytics; History calendar; PDF via browser print.
 - 2026-02 (v3): Late Arrival with displacement/conflict resolution + one-step Undo.
 - 2026-02 (v4): Fill Shortages Preview — proposed changes shown in a dialog with per-cell added/displaced diff; Confirm applies, Cancel discards. Backend adds `?preview=true` to `POST /api/schedule/{date}/fill-shortages`.
+- 2026-02 (v5): Board Search & Filter bar — search worker by name, filter by skill or line; matching names get a yellow highlight, non-matches dimmed (matrix cells, Support Ops, Absent, Unassigned). Setup default priority for "Spares" line forced to 1.
 
 ## Testing
 - Iteration 2 test report: 100% backend + frontend pass, all 18 scenarios (including priority ordering proof, run duplication with no overlap, adjust set/clear behavior, shift isolation, export filename).

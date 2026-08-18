@@ -87,6 +87,8 @@ export default function BoardPage() {
     const [displaceConflict, setDisplaceConflict] = useState(null);
     const [fillPreview, setFillPreview] = useState(null); // {initial_shortage, remaining_shortage, filled_count, changes[]}
     const [fillApplying, setFillApplying] = useState(false);
+    const [filters, setFilters] = useState({ q: "", skill: "", line: "" });
+    const clearFilters = () => setFilters({ q: "", skill: "", line: "" });
     const boardRef = useRef(null);
 
     const setTv = (on) => {
@@ -271,6 +273,50 @@ export default function BoardPage() {
         });
         return m;
     }, [schedule]);
+
+    // All skill names available across the workforce (union of persons.skills keys where any=true)
+    const skillOptions = useMemo(() => {
+        const s = new Set();
+        (persons || []).forEach((p) => {
+            Object.entries(p.skills || {}).forEach(([k, v]) => { if (v) s.add(k); });
+        });
+        return Array.from(s).sort((a, b) => a.localeCompare(b));
+    }, [persons]);
+
+    const filterActive = !!(filters.q.trim() || filters.skill || filters.line);
+    // Person IDs matching all active filters
+    const matchedIds = useMemo(() => {
+        if (!filterActive) return null;
+        const q = filters.q.trim().toLowerCase();
+        const ids = new Set();
+        (persons || []).forEach((p) => {
+            const full = `${p.name || ""} ${p.surname || ""}`.toLowerCase();
+            if (q && !full.includes(q)) return;
+            if (filters.skill && !p.skills?.[filters.skill]) return;
+            if (filters.line) {
+                const locs = personLocations[p.id] || [];
+                const onLine = locs.some((l) => l.line_key === filters.line);
+                // Also allow persons idle/absent who have skill matching any detail on the selected line
+                if (!onLine) {
+                    const lineDetails = new Set(
+                        (schedule?.assignments || [])
+                            .filter((a) => a.line_key === filters.line)
+                            .map((a) => a.detail)
+                    );
+                    let hasSkill = false;
+                    lineDetails.forEach((d) => { if (p.skills?.[d]) hasSkill = true; });
+                    if (!hasSkill) return;
+                }
+            }
+            ids.add(p.id);
+        });
+        return ids;
+    }, [filters, filterActive, persons, personLocations, schedule]);
+
+    // Column matching helper: dim columns not matching line filter
+    const isColMatch = (colKey) => !filters.line || colKey === filters.line;
+    // Detail matching helper: dim cells whose detail doesn't match skill filter
+    const isDetailMatch = (detail) => !filters.skill || detail === filters.skill;
 
     if (loading) return <div className="p-12 text-zinc-500">Loading…</div>;
     if (!schedule) {
@@ -549,6 +595,61 @@ export default function BoardPage() {
                 <Chip label="Unassigned" value={unassignedPersons.length} accent={unassignedPersons.length > 0 ? "warn" : "ok"} />
             </div>
 
+            {/* Search + Filter bar */}
+            <div className="flex flex-wrap items-center gap-2 mb-4 no-print" data-testid="board-filter-bar">
+                <div className="flex items-center border border-white/10 bg-[#111] px-3 py-2 min-w-[220px] flex-1">
+                    <svg className="w-4 h-4 text-zinc-500 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                    <input
+                        type="text"
+                        value={filters.q}
+                        onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
+                        placeholder="Search worker by name…"
+                        data-testid="board-search-input"
+                        className="bg-transparent flex-1 outline-none text-sm text-white placeholder:text-zinc-600"
+                    />
+                </div>
+                <select
+                    value={filters.skill}
+                    onChange={(e) => setFilters((f) => ({ ...f, skill: e.target.value }))}
+                    data-testid="board-filter-skill"
+                    className="bg-[#111] border border-white/10 px-3 py-2 text-sm rounded-none text-white uppercase tracking-wide min-w-[180px]"
+                >
+                    <option value="">All skills</option>
+                    {skillOptions.map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                    ))}
+                </select>
+                <select
+                    value={filters.line}
+                    onChange={(e) => setFilters((f) => ({ ...f, line: e.target.value }))}
+                    data-testid="board-filter-line"
+                    className="bg-[#111] border border-white/10 px-3 py-2 text-sm rounded-none text-white uppercase tracking-wide min-w-[160px]"
+                >
+                    <option value="">All lines</option>
+                    {colKeys.map((k) => (
+                        <option key={k} value={k}>{k}</option>
+                    ))}
+                </select>
+                {filterActive && (
+                    <>
+                        <span
+                            className="text-[10px] uppercase tracking-widest text-yellow-400 border border-yellow-400/40 bg-yellow-400/10 px-2 py-1"
+                            data-testid="board-filter-count"
+                        >
+                            {matchedIds ? matchedIds.size : 0} match
+                        </span>
+                        <Button
+                            variant="outline"
+                            onClick={clearFilters}
+                            data-testid="board-filter-clear"
+                            className="rounded-none border-white/15 text-white bg-transparent hover:bg-white/10 uppercase tracking-widest text-xs"
+                        >
+                            Clear
+                        </Button>
+                    </>
+                )}
+            </div>
+
             {summary.shortage > 0 && (
                 <div className="flex flex-wrap items-center gap-3 border border-red-500 bg-red-950/30 text-red-400 px-4 py-3 mb-4 no-print">
                     <AlertCircle className="w-5 h-5 animate-pulse" />
@@ -639,12 +740,21 @@ export default function BoardPage() {
                                     const totalShort = items.reduce((s, a) => s + a.shortage, 0);
                                     const shortage = totalShort > 0;
                                     const openCellEdit = () => openEdit(items.length === 1 ? items[0] : items);
+                                    // Filter dimming
+                                    const cellDetailMatch = items.some((a) => isDetailMatch(a.detail));
+                                    const cellColMatch = isColMatch(k);
+                                    const cellHasMatchedPerson = allIds.some((id) => matchedIds && matchedIds.has(id));
+                                    const cellDim = filterActive && (
+                                        !cellColMatch ||
+                                        !cellDetailMatch ||
+                                        (filters.q.trim() && !cellHasMatchedPerson)
+                                    );
                                     return (
                                         <td
                                             key={k}
-                                            className={`grid-cell px-3 py-2 align-top group cursor-pointer ${
+                                            className={`grid-cell px-3 py-2 align-top group cursor-pointer transition-opacity ${
                                                 shortage ? "grid-cell-shortage" : "bg-[#0a0a0a]"
-                                            }`}
+                                            } ${cellDim ? "opacity-25" : ""}`}
                                             data-testid={`cell-${rn}-${k}`}
                                             onClick={openCellEdit}
                                         >
@@ -652,9 +762,20 @@ export default function BoardPage() {
                                                 {allNames.length === 0 && (
                                                     <span className="text-zinc-600 text-xs italic">unassigned</span>
                                                 )}
-                                                {allNames.map((n, i) => (
+                                                {allNames.map((n, i) => {
+                                                    const isMatch = matchedIds && matchedIds.has(allIds[i]);
+                                                    return (
                                                     <div key={i} className="text-sm font-semibold text-white leading-tight flex items-center justify-between group/name">
-                                                        <span>{n}</span>
+                                                        <span
+                                                            className={
+                                                                filterActive && isMatch
+                                                                    ? "bg-yellow-400/25 ring-1 ring-yellow-400 px-1 -mx-1"
+                                                                    : (filterActive && !isMatch ? "opacity-40" : "")
+                                                            }
+                                                            data-testid={`worker-name-${allIds[i]}${filterActive && isMatch ? "-match" : ""}`}
+                                                        >
+                                                            {n}
+                                                        </span>
                                                         <button
                                                             type="button"
                                                             onClick={(e) => { e.stopPropagation(); handleQuickAbsent(allIds[i], n); }}
@@ -665,7 +786,7 @@ export default function BoardPage() {
                                                             <UserX className="w-3 h-3" />
                                                         </button>
                                                     </div>
-                                                ))}
+                                                );})}
                                                 {shortage && (
                                                     <span className="mt-1 inline-flex items-center gap-1 text-red-400 text-[10px] uppercase tracking-widest font-bold animate-pulse">
                                                         <AlertCircle className="w-3 h-3" /> Short by {totalShort}
@@ -699,6 +820,11 @@ export default function BoardPage() {
                                                     item={s}
                                                     onEdit={(a) => openEdit(a)}
                                                     onQuickAbsent={handleQuickAbsent}
+                                                    filterActive={filterActive}
+                                                    matchedIds={matchedIds}
+                                                    isColMatch={isColMatch}
+                                                    isDetailMatch={isDetailMatch}
+                                                    nameQuery={filters.q}
                                                 />
                                             ))}
                                         </div>
@@ -727,11 +853,18 @@ export default function BoardPage() {
                                     </span>
                                 ) : (
                                     <div className="flex flex-wrap gap-1.5">
-                                        {absentPersons.map((p) => (
+                                        {absentPersons.map((p) => {
+                                            const isMatch = matchedIds && matchedIds.has(p.id);
+                                            const dim = filterActive && !isMatch;
+                                            return (
                                             <span
                                                 key={p.id}
-                                                data-testid={`absent-chip-${p.id}`}
-                                                className="inline-flex items-center gap-1 border border-red-500/40 bg-red-500/10 text-red-200 text-xs px-2 py-1 font-medium"
+                                                data-testid={`absent-chip-${p.id}${filterActive && isMatch ? "-match" : ""}`}
+                                                className={`inline-flex items-center gap-1 border text-xs px-2 py-1 font-medium transition-opacity ${
+                                                    filterActive && isMatch
+                                                        ? "border-yellow-400 bg-yellow-400/20 text-yellow-100 ring-1 ring-yellow-400"
+                                                        : "border-red-500/40 bg-red-500/10 text-red-200"
+                                                } ${dim ? "opacity-25" : ""}`}
                                             >
                                                 {p.name} {p.surname}
                                                 <button
@@ -744,7 +877,7 @@ export default function BoardPage() {
                                                     <UserCheck className="w-3 h-3" />
                                                 </button>
                                             </span>
-                                        ))}
+                                        );})}
                                     </div>
                                 )}
                             </td>
@@ -785,16 +918,23 @@ export default function BoardPage() {
                                     </span>
                                 ) : (
                                     <div className="flex flex-wrap gap-1.5">
-                                        {unassignedPersons.map((p) => (
+                                        {unassignedPersons.map((p) => {
+                                            const isMatch = matchedIds && matchedIds.has(p.id);
+                                            const dim = filterActive && !isMatch;
+                                            return (
                                             <span
                                                 key={p.id}
-                                                data-testid={`unassigned-chip-${p.id}`}
-                                                className="inline-flex items-center border border-amber-500/40 bg-amber-500/10 text-amber-200 text-xs px-2 py-1 font-medium"
+                                                data-testid={`unassigned-chip-${p.id}${filterActive && isMatch ? "-match" : ""}`}
+                                                className={`inline-flex items-center border text-xs px-2 py-1 font-medium transition-opacity ${
+                                                    filterActive && isMatch
+                                                        ? "border-yellow-400 bg-yellow-400/20 text-yellow-100 ring-1 ring-yellow-400"
+                                                        : "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                                                } ${dim ? "opacity-25" : ""}`}
                                                 title={`${Object.values(p.skills || {}).filter(Boolean).length} skills`}
                                             >
                                                 {p.name} {p.surname}
                                             </span>
-                                        ))}
+                                        );})}
                                     </div>
                                 )}
                             </td>
@@ -1402,7 +1542,7 @@ function SuggestionRow({ s, onAdd }) {
     );
 }
 
-function SupportBlock({ item, onEdit, onQuickAbsent }) {
+function SupportBlock({ item, onEdit, onQuickAbsent, filterActive, matchedIds, isColMatch, isDetailMatch, nameQuery }) {
     if (!item.planned) {
         return (
             <div
@@ -1418,22 +1558,26 @@ function SupportBlock({ item, onEdit, onQuickAbsent }) {
             </div>
         );
     }
+    const lineColMatch = !isColMatch || isColMatch(item.line);
     return (
-        <div className="py-2.5" data-testid={`support-line-${item.line}`}>
+        <div className={`py-2.5 ${filterActive && !lineColMatch ? "opacity-25" : ""}`} data-testid={`support-line-${item.line}`}>
             <div className="text-sm font-chivo uppercase font-bold tracking-tight text-[#3B6AB8]">
                 {item.line}
             </div>
             {item.assignments.map((a) => {
                 const shortage = a.shortage > 0;
+                const detailMatch = !isDetailMatch || isDetailMatch(a.detail);
+                const hasMatchedPerson = a.assigned_person_ids.some((id) => matchedIds && matchedIds.has(id));
+                const cellDim = filterActive && (!lineColMatch || !detailMatch || ((nameQuery || "").trim() && !hasMatchedPerson));
                 return (
                     <div
                         key={a.line_key + "||" + a.row_name + "||" + a.detail}
                         onClick={() => onEdit(a)}
-                        className={`w-full text-left mt-1.5 px-2 py-1.5 group cursor-pointer ${
+                        className={`w-full text-left mt-1.5 px-2 py-1.5 group cursor-pointer transition-opacity ${
                             shortage
                                 ? "border border-red-500 bg-red-950/30"
                                 : "hover:bg-white/5 border border-transparent"
-                        }`}
+                        } ${cellDim ? "opacity-25" : ""}`}
                         data-testid={`support-cell-${a.line}-${a.row_name}`}
                     >
                         <div className="text-[10px] uppercase tracking-widest text-zinc-500 flex items-center justify-between">
@@ -1443,20 +1587,27 @@ function SupportBlock({ item, onEdit, onQuickAbsent }) {
                         {a.assigned_person_names.length === 0 ? (
                             <div className="text-sm italic text-zinc-600">unassigned</div>
                         ) : (
-                            a.assigned_person_names.map((n, i) => (
+                            a.assigned_person_names.map((n, i) => {
+                                const pid = a.assigned_person_ids[i];
+                                const isMatch = matchedIds && matchedIds.has(pid);
+                                return (
                                 <div key={i} className="text-sm font-semibold text-white leading-snug flex items-center justify-between group/name">
-                                    <span>{n}</span>
+                                    <span className={
+                                        filterActive && isMatch
+                                            ? "bg-yellow-400/25 ring-1 ring-yellow-400 px-1 -mx-1"
+                                            : (filterActive && !isMatch ? "opacity-40" : "")
+                                    }>{n}</span>
                                     <button
                                         type="button"
-                                        onClick={(e) => { e.stopPropagation(); onQuickAbsent(a.assigned_person_ids[i], n); }}
+                                        onClick={(e) => { e.stopPropagation(); onQuickAbsent(pid, n); }}
                                         title="Mark absent from today"
                                         className="ml-2 opacity-0 group-hover/name:opacity-100 text-red-400 hover:text-red-300 no-print"
-                                        data-testid={`support-quick-absent-${a.assigned_person_ids[i]}`}
+                                        data-testid={`support-quick-absent-${pid}`}
                                     >
                                         <UserX className="w-3 h-3" />
                                     </button>
                                 </div>
-                            ))
+                            );})
                         )}
                         {shortage && (
                             <div className="text-[10px] text-red-400 uppercase tracking-widest font-bold mt-0.5">

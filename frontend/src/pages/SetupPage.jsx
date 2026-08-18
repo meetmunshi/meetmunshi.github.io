@@ -52,9 +52,10 @@ export default function SetupPage() {
                 setPersons(personsData || []);
                 const init = {};
                 (linesData.lines || []).forEach((l, idx) => {
+                    const isSpares = l.line.toLowerCase() === "spares";
                     init[l.line] = {
                         enabled: true,
-                        priority: idx < 3 ? idx + 1 : DEFAULT_PRIORITY,
+                        priority: isSpares ? 1 : (idx < 3 ? idx + 1 : DEFAULT_PRIORITY),
                         run_count: 1,
                     };
                 });
