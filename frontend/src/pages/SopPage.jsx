@@ -42,7 +42,7 @@ const steps = [
         title: "Search & Filter",
         icon: Search,
         body: [
-            "Use the search bar at the top of the Board to find a worker by name — matches light up in yellow across the whole board.",
+            "Use the search bar at the top of the Board to find an associate by name — matches light up in yellow across the whole board.",
             "Filter by Skill or by Line to narrow the view instantly. Non-matching cells and chips dim so you can spot options at a glance.",
             "Click Clear to reset filters. Combine name + skill + line for pinpoint results.",
         ],
@@ -63,9 +63,9 @@ const steps = [
         title: "Someone Arrived Late",
         icon: UserCheck,
         body: [
-            "In the Absent row, click the green tick icon on a worker's chip to open the Late Arrival dialog.",
+            "In the Absent row, click the green tick icon on an associate's chip to open the Late Arrival dialog.",
             "The tool suggests the best fitting open cell (marked 'BEST FIT') and lists all planned lines they're skilled for. Click Approve on any option.",
-            "If the chosen cell is already full, a Conflict dialog appears — pick which existing worker to displace, or send the late arrival to the Unassigned pool.",
+            "If the chosen cell is already full, a Conflict dialog appears — pick which existing associate to displace, or send the late arrival to the Unassigned pool.",
             "Made a mistake? Click Undo in the toolbar to roll back the last late-arrival action.",
         ],
     },
@@ -74,8 +74,8 @@ const steps = [
         title: "Mark Attendance Anywhere",
         icon: Users,
         body: [
-            "On desktop: hover any name on the board and click the small × icon to mark that worker absent for today.",
-            "The worker moves to the Absent row and their cell becomes short. The rest of the plan stays as-is.",
+            "On desktop: hover any name on the board and click the small × icon to mark that associate absent for today.",
+            "The associate moves to the Absent row and their cell becomes short. The rest of the plan stays as-is.",
         ],
     },
     {
@@ -84,7 +84,7 @@ const steps = [
         icon: Smartphone,
         body: [
             "Open the same web link on any phone — the board reshapes into a card view (one card per line) so you can read it without zooming.",
-            "Every worker has a red 'mark absent' icon next to their name and a pencil icon to edit that cell — no hover needed.",
+            "Every associate has a red 'mark absent' icon next to their name and a pencil icon to edit that cell — no hover needed.",
             "Use the Undo, Refresh, and Log buttons at the top; icons stay visible even on small screens.",
         ],
     },
@@ -102,7 +102,7 @@ const steps = [
         title: "Review the Month",
         icon: BarChart3,
         body: [
-            "Analytics: pick any month from the dropdown to see three panels — Top Absenteeism (workers ranked by absences with the exact dates), Lines Hit by Absence (which lines lost the most seats when someone was off), and Line Utilisation (total runs and days each line was scheduled).",
+            "Analytics: pick any month from the dropdown to see three panels — Top Absenteeism (associates ranked by absences with the exact dates), Lines Hit by Absence (which lines lost the most seats when someone was off), and Line Utilisation (total runs and days each line was scheduled).",
             "History (calendar): jump into any past day's board. Hover a day (desktop) or tap the trash icon (mobile) to delete an incorrect record — you'll be asked to confirm, and locked schedules show an extra warning.",
             "Heatmap: which Area × Line pairs are fragile — pick trainees for cross-skilling.",
         ],

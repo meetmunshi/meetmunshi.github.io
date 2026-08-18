@@ -426,7 +426,7 @@ export default function BoardPage() {
                 setLateArr(null);
                 toast.success(
                     r.displaced_placed_id
-                        ? "Assigned; displaced worker moved to a shortage cell"
+                        ? "Assigned; displaced associate moved to a shortage cell"
                         : "Assigned successfully",
                 );
             }
@@ -445,7 +445,7 @@ export default function BoardPage() {
                 target: { line: opt.line, row_name: opt.row_name, detail: opt.detail, required: 1 },
             });
             setDisplaceConflict(null);
-            toast.success("Displaced worker reassigned");
+            toast.success("Displaced associate reassigned");
             load();
         } catch (e) {
             toast.error(e.response?.data?.detail || e.message);
@@ -603,7 +603,7 @@ export default function BoardPage() {
                         type="text"
                         value={filters.q}
                         onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
-                        placeholder="Search worker by name…"
+                        placeholder="Search associate by name…"
                         data-testid="board-search-input"
                         className="bg-transparent flex-1 outline-none text-sm text-white placeholder:text-zinc-600"
                     />
@@ -773,7 +773,7 @@ export default function BoardPage() {
                                                                     ? "bg-yellow-400/25 ring-1 ring-yellow-400 px-1 -mx-1"
                                                                     : (filterActive && !isMatch ? "opacity-40" : "")
                                                             }
-                                                            data-testid={`worker-name-${allIds[i]}${filterActive && isMatch ? "-match" : ""}`}
+                                                            data-testid={`associate-name-${allIds[i]}${filterActive && isMatch ? "-match" : ""}`}
                                                         >
                                                             {n}
                                                         </span>

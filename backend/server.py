@@ -901,7 +901,7 @@ async def adjust_cell(date: str, payload: dict):
 
 @api_router.post("/schedule/{date}/late-arrival")
 async def late_arrival(date: str, payload: dict):
-    """Handle a worker arriving late.
+    """Handle an associate arriving late.
     payload = {shift, person_id, target?: {line, row_name, detail, add_line?: bool}}
     If target given: assign them there, possibly displacing another. Response includes displacement info.
     If no target: just returns best-fit + options for the manager to pick from.
@@ -1014,7 +1014,7 @@ async def late_arrival(date: str, payload: dict):
     overrides[cell_key] = current_ids
     unassigned.add(cell_key)
 
-    # Try to reassign displaced worker to a skill-matching free/shortage cell
+    # Try to reassign displaced associate to a skill-matching free/shortage cell
     displaced_options = None
     if displaced_id:
         disp_person = person_by_id.get(displaced_id)
