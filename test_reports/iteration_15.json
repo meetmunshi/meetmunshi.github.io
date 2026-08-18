@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 14 (Late Arrival + Undo) verified end-to-end. Created /app/backend/tests/test_iter14.py (7 tests, ALL PASSING) covering: (1) /api/stats persons=71/details=71/lines=15 (new file); (2) baseline generation for 2026-08-19 day X-Smart p=1 rc=1 + Element 2 p=2 rc=1 with 1 absent from X-Smart P&C; (3) POST /schedule/{date}/late-arrival WITHOUT target returns {person, best_fit, planned[], not_planned[]}; planned entries all reference active lines, not_planned entries reference inactive lines, all filtered by person's skills; (4) POST /schedule/{date}/late-arrival WITH target on a planned cell at required: pid removed from absent_person_ids, assigned to the target cell, and either 'displaced_placed_id' is set (auto-reassigned to a skill-matching shortage cell) or 'displaced' conflict object is returned with an options[] list; (5) POST /schedule/{date}/undo restores previous absent_person_ids and clears previous_state so the next undo returns 400; (6) POST /schedule/{date}/late-arrival WITH target on NOT-PLANNED line correctly appends that line to line_configs at max_prio+1 with run_count=1 and generates the schedule with the person assigned to the added cell; (7) 400 for missing person_id, 404 for unknown person. Frontend Playwright flow on /board?date=2026-08-19&shift=day: located exactly one late-arrival-<id> button on the absent chip (Dharmila Vasava); clicking opened late-arrival-dialog with late-arrival-best banner and late-arrival-approve button; clicking Approve invoked API; when auto-reassignment was not possible, conflict-dialog opened; toolbar undo-btn is present and functional (toast 'Undone' shown, absent chip restored). No regressions observed in schedule shape, absent chip, unassigned pool, or toolbar controls.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter14.py",
+    "/app/test_reports/pytest/pytest_iter14.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py late_arrival (L810-983) correctly snapshots the pre-mutation state (line_configs, absent_person_ids, overrides, unassigned_keys, required_overrides) BEFORE calling generate_schedule, and persists the snapshot in $set after the new schedule is stored — undo path (L986-1008) rebuilds from that snapshot and clears it, guaranteeing one-step undo semantics. Second undo returns 400 as spec'd.",
+    "Displacement heuristic (L917-918): current_ids.sort(key=lambda i: -skill_totals.get(i,0)) then pop(0) actually keeps the MOST-specialized worker in place and displaces the LEAST-specialized (highest skill_total sorted first, pop from index 0). Comment at L916 says 'displace LAST-in' but implementation is actually 'least-specialized first' which matches spec — recommend updating the comment for clarity.",
+    "Auto-reassignment loop for displaced worker (L931-946) iterates over sched_doc['assignments'] (the OLD schedule) rather than the just-updated cells, meaning shortages are read pre-displacement. This is acceptable because the target cell is explicitly skipped and other cells' shortages haven't changed, but note that if the same worker was multiply-assigned this could theoretically double-place; not observed in practice since generate_schedule dedups downstream.",
+    "OptionRow testid pattern `late-planned-${o.line}-${o.detail}` and `conflict-opt-${o.line}-${o.detail}` include spaces (e.g. 'X-Smart P & C'); selectors using CSS attribute matching will need proper escaping — recommend documenting for future test authors (data-testid attribute selectors need [data-testid=\"...\"] quoting).",
+    "BoardPage.jsx L373 fallback template `${lateArr.person.name} ${lateArr.person.surname}` is a defensive backstop; the primary path uses only lateArr.person.name which is what the backend returns from _person_full_name — consistent behavior.",
+    "backend/tests/test_iter11.py still has 2 stale-data failures (SK300 frame 6 vs 7, GX300 frame 2 vs 3) inherited from previous iteration — not a regression from iter14."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter14.py (new — 7 tests, all passing)"
+  ],
+  "success_rate": {"backend": "100% (7/7 iter14)", "frontend": "100% (all iter14 UI assertions pass)"},
+  "test_credentials": "none",
+  "seed_data_creation": "Baseline schedule for 2026-08-19 day (X-Smart p=1 rc=1 + Element 2 p=2 rc=1) with 1 absent from X-Smart P&C — created and left in DB with absent restored via undo at end of tests.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter14 (Late Arrival + Undo) fully verified. Backend endpoints POST /schedule/{date}/late-arrival (with/without target) and POST /schedule/{date}/undo are working per spec. Frontend late-arrival-dialog, late-arrival-best banner, late-arrival-approve, conflict-dialog with conflict-opt-* testids, undo-btn in toolbar are all wired correctly. previous_state field is set on mutation and cleared on undo. Second undo returns 400 as expected. Note: OptionRow testids embed detail names containing spaces/ampersands (e.g. 'late-planned-X-Smart-X-Smart P & C') — future automated tests should quote these selectors. test_iter11.py has 2 pre-existing stale-data failures unrelated to iter14.",
+  "rca of the issue": "N/A — all iter14 acceptance criteria pass."
+}

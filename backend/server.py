@@ -88,6 +88,7 @@ class Schedule(BaseModel):
     unassigned_keys: List[str] = []
     required_overrides: Dict[str, int] = {}
     logged_at: Optional[str] = None
+    previous_state: Optional[dict] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     total_required: int = 0
     total_assigned: int = 0
@@ -574,11 +575,14 @@ async def suggest_lines(date: str, shift: str = "day"):
     return {"free_pool_size": len(free_pool), "suggestions": suggestions}
 
 
-@api_router.post("/schedule/{date}/fill-shortages", response_model=Schedule)
-async def fill_shortages(date: str, shift: str = "day"):
+@api_router.post("/schedule/{date}/fill-shortages")
+async def fill_shortages(date: str, shift: str = "day", preview: bool = False):
     """Auto-assign best available skilled candidates to every shortage cell.
     Iterates through 3 passes (FREE pool → BORROW from excess → SWAP chain), then loops
-    the whole thing until no more shortages can be filled (fixed point)."""
+    the whole thing until no more shortages can be filled (fixed point).
+
+    When preview=true, returns a diff of proposed changes WITHOUT persisting.
+    """
     sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
     if not sched_doc:
         raise HTTPException(404, "Schedule not found")
@@ -593,6 +597,15 @@ async def fill_shortages(date: str, shift: str = "day"):
     assignments = [dict(a) for a in sched_doc["assignments"]]
     for a in assignments:
         a["assigned_person_ids"] = list(a["assigned_person_ids"])
+    # Snapshot pre-fill state for preview diff
+    initial_state = {
+        f"{a['row_name']}||{a['line_key']}||{a['detail']}": {
+            "assigned": list(a["assigned_person_ids"]),
+            "required": a["required"],
+        }
+        for a in assignments
+    }
+    initial_shortage = sum(max(0, a["required"] - len(a["assigned_person_ids"])) for a in assignments)
 
     def cell_key(a: dict) -> str:
         return f"{a['row_name']}||{a['line_key']}||{a['detail']}"
@@ -690,6 +703,45 @@ async def fill_shortages(date: str, shift: str = "day"):
                 progressed = True
         if not progressed:
             break
+
+    if preview:
+        # Build diff without persisting
+        changes = []
+        for a in assignments:
+            key = f"{a['row_name']}||{a['line_key']}||{a['detail']}"
+            before = set(initial_state[key]["assigned"])
+            after = set(a["assigned_person_ids"])
+            added = after - before
+            removed = before - after
+            if not added and not removed:
+                continue
+            new_shortage = max(0, a["required"] - len(after))
+            changes.append({
+                "row_name": a["row_name"],
+                "line_key": a["line_key"],
+                "detail": a["detail"],
+                "required": a["required"],
+                "added": [
+                    {"id": pid, "name": _person_full_name(person_by_id[pid])}
+                    for pid in added if pid in person_by_id
+                ],
+                "removed": [
+                    {"id": pid, "name": _person_full_name(person_by_id[pid])}
+                    for pid in removed if pid in person_by_id
+                ],
+                "now_short": new_shortage > 0,
+                "shortage_after": new_shortage,
+            })
+        # Sort: cells with additions first, then removals
+        changes.sort(key=lambda c: (-len(c["added"]), c["row_name"], c["line_key"]))
+        remaining_shortage = sum(max(0, a["required"] - len(a["assigned_person_ids"])) for a in assignments)
+        return {
+            "preview": True,
+            "initial_shortage": initial_shortage,
+            "remaining_shortage": remaining_shortage,
+            "filled_count": initial_shortage - remaining_shortage,
+            "changes": changes,
+        }
 
     req = ScheduleRequest(
         date=date, shift=shift,
@@ -804,6 +856,207 @@ async def adjust_cell(date: str, payload: dict):
         required_overrides=required_overrides,
     )
     return await generate_schedule(req)
+
+
+@api_router.post("/schedule/{date}/late-arrival")
+async def late_arrival(date: str, payload: dict):
+    """Handle a worker arriving late.
+    payload = {shift, person_id, target?: {line, row_name, detail, add_line?: bool}}
+    If target given: assign them there, possibly displacing another. Response includes displacement info.
+    If no target: just returns best-fit + options for the manager to pick from.
+    Every mutation stores a previous_state snapshot for one-step undo."""
+    shift = payload.get("shift", "day")
+    pid = payload.get("person_id")
+    target = payload.get("target")
+    if not pid:
+        raise HTTPException(400, "person_id required")
+
+    sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
+    if not sched_doc:
+        raise HTTPException(404, "Schedule not found")
+
+    persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
+    person_by_id = {p["id"]: p for p in persons}
+    details = await db.line_details.find({}, {"_id": 0}).to_list(1000)
+    skill_totals = _skill_totals(persons)
+    person = person_by_id.get(pid)
+    if not person:
+        raise HTTPException(404, "Person not found")
+
+    active_lines = {c["line"] for c in sched_doc["line_configs"]}
+    absent_set = set(sched_doc.get("absent_person_ids", []))
+    used = _collect_used_person_ids(sched_doc) - {pid}
+
+    def build_options() -> dict:
+        planned, not_planned = [], []
+        for d in details:
+            if not bool(person.get("skills", {}).get(d["detail"])):
+                continue
+            # Find cell state in current assignments (if line is active)
+            cell = next(
+                (a for a in sched_doc["assignments"]
+                 if a["line"] == d["line"] and a["detail"] == d["detail"]),
+                None,
+            )
+            base = {
+                "line": d["line"],
+                "row_name": d.get("row_name") or d["detail"],
+                "detail": d["detail"],
+                "required": d["persons_required"],
+            }
+            if d["line"] in active_lines and cell:
+                gap = cell["shortage"]
+                base.update({
+                    "line_key": cell["line_key"],
+                    "assigned_count": len(cell["assigned_person_ids"]),
+                    "shortage": gap,
+                    "planned": True,
+                    "priority_score": (gap * 100) + (10 - min(skill_totals.get(pid, 0), 10)),
+                })
+                planned.append(base)
+            else:
+                base.update({"line_key": d["line"], "assigned_count": 0, "shortage": d["persons_required"], "planned": False, "priority_score": 0})
+                not_planned.append(base)
+        planned.sort(key=lambda x: (-x["priority_score"], x["line"]))
+        not_planned.sort(key=lambda x: x["line"])
+        best_fit = planned[0] if planned else (not_planned[0] if not_planned else None)
+        return {"best_fit": best_fit, "planned": planned, "not_planned": not_planned}
+
+    if not target:
+        return {"person": {"id": pid, "name": _person_full_name(person)}, **build_options()}
+
+    # --- Mutation path: snapshot then assign ---
+    snapshot = {
+        "line_configs": sched_doc["line_configs"],
+        "absent_person_ids": sched_doc["absent_person_ids"],
+        "overrides": sched_doc.get("overrides", {}),
+        "unassigned_keys": sched_doc.get("unassigned_keys", []),
+        "required_overrides": sched_doc.get("required_overrides", {}),
+    }
+
+    # Remove from absent
+    absent = [a for a in sched_doc["absent_person_ids"] if a != pid]
+
+    overrides = dict(sched_doc.get("overrides", {}) or {})
+    unassigned = set(sched_doc.get("unassigned_keys", []) or [])
+    line_configs = list(sched_doc["line_configs"])
+
+    line = target["line"]
+    detail = target["detail"]
+    row_name = target.get("row_name") or detail
+
+    # Add line if it's not planned yet
+    if line not in active_lines:
+        max_prio = max((c["priority"] for c in line_configs), default=0)
+        line_configs.append({"line": line, "priority": max_prio + 1, "run_count": 1})
+
+    line_key = line  # run 1
+    cell_key = f"{row_name}||{line_key}||{detail}"
+
+    # Current cell state
+    cell = next(
+        (a for a in sched_doc["assignments"]
+         if a["line_key"] == line_key and a["detail"] == detail and a["row_name"] == row_name),
+        None,
+    )
+    current_ids = list(cell["assigned_person_ids"]) if cell else []
+    required = cell["required"] if cell else target.get("required", 1)
+
+    displaced_id = None
+    if cell and len(current_ids) >= required and current_ids:
+        # Displace the LAST-in assignee (avoid displacing specialists first if possible)
+        current_ids.sort(key=lambda i: -skill_totals.get(i, 0))
+        displaced_id = current_ids.pop(0)
+
+    if pid not in current_ids:
+        current_ids.append(pid)
+    overrides[cell_key] = current_ids
+    unassigned.add(cell_key)
+
+    # Try to reassign displaced worker to a skill-matching free/shortage cell
+    displaced_options = None
+    if displaced_id:
+        disp_person = person_by_id.get(displaced_id)
+        placed = False
+        if disp_person:
+            for a in sched_doc["assignments"]:
+                # Skip the target cell we just filled
+                if a["line_key"] == line_key and a["detail"] == detail and a["row_name"] == row_name:
+                    continue
+                if not bool(disp_person.get("skills", {}).get(a["detail"])):
+                    continue
+                # Prefer shortage cells
+                if a["shortage"] > 0:
+                    dk = f"{a['row_name']}||{a['line_key']}||{a['detail']}"
+                    new_list = list(a["assigned_person_ids"])
+                    if displaced_id not in new_list:
+                        new_list.append(displaced_id)
+                    overrides[dk] = new_list
+                    unassigned.add(dk)
+                    placed = True
+                    break
+        if not placed:
+            # Conflict — return options for the manager
+            opts = []
+            for a in sched_doc["assignments"]:
+                if a["line_key"] == line_key and a["detail"] == detail and a["row_name"] == row_name:
+                    continue
+                if disp_person and bool(disp_person.get("skills", {}).get(a["detail"])):
+                    opts.append({
+                        "line": a["line"], "row_name": a["row_name"], "line_key": a["line_key"],
+                        "detail": a["detail"], "shortage": a["shortage"],
+                        "assigned_count": len(a["assigned_person_ids"]),
+                    })
+            displaced_options = {
+                "id": displaced_id,
+                "name": _person_full_name(disp_person) if disp_person else displaced_id,
+                "options": opts,
+            }
+
+    req = ScheduleRequest(
+        date=date, shift=shift,
+        line_configs=[LineConfig(**c) for c in line_configs],
+        absent_person_ids=absent,
+        overrides=overrides,
+        unassigned_keys=list(unassigned),
+        required_overrides=dict(sched_doc.get("required_overrides", {}) or {}),
+    )
+    new_sched = await generate_schedule(req)
+    # Attach snapshot for undo
+    await db.schedules.update_one(
+        {"date": date, "shift": shift},
+        {"$set": {"previous_state": snapshot}},
+    )
+    return {
+        "schedule": new_sched.model_dump(),
+        "displaced": displaced_options,
+        "displaced_placed_id": displaced_id if displaced_id and not displaced_options else None,
+    }
+
+
+@api_router.post("/schedule/{date}/undo")
+async def undo_late_arrival(date: str, shift: str = "day"):
+    sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
+    if not sched_doc:
+        raise HTTPException(404, "Schedule not found")
+    snap = sched_doc.get("previous_state")
+    if not snap:
+        raise HTTPException(400, "Nothing to undo")
+    req = ScheduleRequest(
+        date=date, shift=shift,
+        line_configs=[LineConfig(**c) for c in snap["line_configs"]],
+        absent_person_ids=snap["absent_person_ids"],
+        overrides=snap.get("overrides", {}),
+        unassigned_keys=snap.get("unassigned_keys", []),
+        required_overrides=snap.get("required_overrides", {}),
+    )
+    result = await generate_schedule(req)
+    # Clear the snapshot to prevent double-undo
+    await db.schedules.update_one(
+        {"date": date, "shift": shift},
+        {"$set": {"previous_state": None}},
+    )
+    return result
 
 
 @api_router.post("/schedule/{date}/mark-absent")

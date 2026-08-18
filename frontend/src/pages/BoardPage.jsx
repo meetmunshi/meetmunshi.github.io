@@ -8,11 +8,14 @@ import {
     fetchPersons,
     adjustCell,
     fillShortages,
+    previewFillShortages,
     suggestLines,
     generateSchedule,
     markAbsentFromBoard,
     logSchedule,
     suggestReplacement,
+    lateArrival,
+    undoLateArrival,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,6 +45,8 @@ import {
     Lock,
     CheckCircle2,
     Wand2,
+    Undo2,
+    UserCheck,
 } from "lucide-react";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -78,6 +83,10 @@ export default function BoardPage() {
     const [tick, setTick] = useState(0);
     const [suggestions, setSuggestions] = useState(null);
     const [suggestOpen, setSuggestOpen] = useState(false);
+    const [lateArr, setLateArr] = useState(null); // {person, best_fit, planned, not_planned}
+    const [displaceConflict, setDisplaceConflict] = useState(null);
+    const [fillPreview, setFillPreview] = useState(null); // {initial_shortage, remaining_shortage, filled_count, changes[]}
+    const [fillApplying, setFillApplying] = useState(false);
     const boardRef = useRef(null);
 
     const setTv = (on) => {
@@ -339,6 +348,74 @@ export default function BoardPage() {
         }
     };
 
+    const openLateArrival = async (person) => {
+        try {
+            const r = await lateArrival(date, { shift, person_id: person.id });
+            setLateArr({ person, ...r });
+        } catch (e) {
+            toast.error(e.response?.data?.detail || e.message);
+        }
+    };
+
+    const assignLateArrival = async (opt) => {
+        if (!lateArr) return;
+        try {
+            const r = await lateArrival(date, {
+                shift,
+                person_id: lateArr.person.id,
+                target: {
+                    line: opt.line,
+                    row_name: opt.row_name,
+                    detail: opt.detail,
+                    required: opt.required,
+                },
+            });
+            if (r.displaced) {
+                setDisplaceConflict({
+                    displaced: r.displaced,
+                    lateArrivalName: lateArr.person.name || `${lateArr.person.name} ${lateArr.person.surname}`,
+                });
+                setLateArr(null);
+            } else {
+                setLateArr(null);
+                toast.success(
+                    r.displaced_placed_id
+                        ? "Assigned; displaced worker moved to a shortage cell"
+                        : "Assigned successfully",
+                );
+            }
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || e.message);
+        }
+    };
+
+    const resolveDisplaced = async (opt) => {
+        if (!displaceConflict) return;
+        try {
+            await lateArrival(date, {
+                shift,
+                person_id: displaceConflict.displaced.id,
+                target: { line: opt.line, row_name: opt.row_name, detail: opt.detail, required: 1 },
+            });
+            setDisplaceConflict(null);
+            toast.success("Displaced worker reassigned");
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || e.message);
+        }
+    };
+
+    const doUndo = async () => {
+        try {
+            await undoLateArrival(date, shift);
+            toast.success("Undone");
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || e.message);
+        }
+    };
+
     const handleLog = async () => {
         if (!schedule) return;
         if (schedule.logged_at) {
@@ -390,6 +467,15 @@ export default function BoardPage() {
                         <option value="evening">Evening</option>
                         <option value="night">Night</option>
                     </select>
+                    <Button
+                        variant="outline"
+                        onClick={doUndo}
+                        data-testid="undo-btn"
+                        title="Undo last late-arrival assignment"
+                        className="rounded-none border-white/15 text-white bg-transparent hover:bg-white/10 uppercase tracking-widest text-xs"
+                    >
+                        <Undo2 className="w-4 h-4 mr-2" /> Undo
+                    </Button>
                     <Button
                         variant="outline"
                         onClick={load}
@@ -472,11 +558,12 @@ export default function BoardPage() {
                     <Button
                         onClick={async () => {
                             try {
-                                const r = await fillShortages(date, shift);
-                                const filled = summary.shortage - r.total_shortage;
-                                if (filled > 0) toast.success(`Filled ${filled} of ${summary.shortage} shortages`);
-                                else toast.info("No free skilled staff available for remaining shortages");
-                                load();
+                                const p = await previewFillShortages(date, shift);
+                                if (!p.changes || p.changes.length === 0) {
+                                    toast.info("No free skilled staff available for remaining shortages");
+                                    return;
+                                }
+                                setFillPreview(p);
                             } catch (e) {
                                 toast.error(e.response?.data?.detail || e.message);
                             }
@@ -643,9 +730,19 @@ export default function BoardPage() {
                                         {absentPersons.map((p) => (
                                             <span
                                                 key={p.id}
-                                                className="inline-flex items-center border border-red-500/40 bg-red-500/10 text-red-200 text-xs px-2 py-1 font-medium"
+                                                data-testid={`absent-chip-${p.id}`}
+                                                className="inline-flex items-center gap-1 border border-red-500/40 bg-red-500/10 text-red-200 text-xs px-2 py-1 font-medium"
                                             >
                                                 {p.name} {p.surname}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => openLateArrival(p)}
+                                                    title="Mark arrived late & assign"
+                                                    data-testid={`late-arrival-${p.id}`}
+                                                    className="ml-1 text-emerald-400 hover:text-emerald-300 border-l border-red-500/30 pl-1.5"
+                                                >
+                                                    <UserCheck className="w-3 h-3" />
+                                                </button>
                                             </span>
                                         ))}
                                     </div>
@@ -744,6 +841,94 @@ export default function BoardPage() {
                 </DialogContent>
             </Dialog>
 
+            {/* Late Arrival dialog */}
+            <Dialog open={!!lateArr} onOpenChange={(o) => !o && setLateArr(null)}>
+                <DialogContent
+                    className="rounded-none bg-[#111] border-emerald-500/30 text-white max-w-2xl"
+                    data-testid="late-arrival-dialog"
+                >
+                    <DialogHeader>
+                        <DialogTitle className="font-chivo uppercase tracking-tight flex items-center gap-2">
+                            <UserCheck className="w-5 h-5 text-emerald-400" />
+                            {lateArr?.person?.name} {lateArr?.person?.surname || ""} · Arrived Late
+                        </DialogTitle>
+                        <DialogDescription className="text-xs text-zinc-500">
+                            Best-fit highlighted first. Planned tasks show current status; not-planned tasks will be added to today's schedule if selected.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="max-h-[420px] overflow-y-auto -mx-6 px-6 space-y-1.5">
+                        {lateArr?.best_fit && (
+                            <div
+                                data-testid="late-arrival-best"
+                                className="border-2 border-emerald-500 bg-emerald-500/10 p-3 mb-2 flex items-center justify-between"
+                            >
+                                <div>
+                                    <div className="text-[10px] uppercase tracking-widest text-emerald-300">Best Fit</div>
+                                    <div className="font-chivo uppercase font-bold text-sm">{lateArr.best_fit.line} · {lateArr.best_fit.row_name}</div>
+                                    <div className="text-[11px] text-zinc-400">{lateArr.best_fit.detail} · {lateArr.best_fit.shortage > 0 ? `short by ${lateArr.best_fit.shortage}` : `${lateArr.best_fit.assigned_count}/${lateArr.best_fit.required}`}</div>
+                                </div>
+                                <Button
+                                    onClick={() => assignLateArrival(lateArr.best_fit)}
+                                    data-testid="late-arrival-approve"
+                                    className="rounded-none bg-emerald-500 hover:bg-emerald-500/85 text-black uppercase tracking-widest text-xs font-bold"
+                                >
+                                    Approve
+                                </Button>
+                            </div>
+                        )}
+                        {lateArr?.planned?.slice(1).map((o) => (
+                            <OptionRow key={o.line + "||" + o.detail} opt={o} onPick={assignLateArrival} testid={`late-planned-${o.line}-${o.detail}`} />
+                        ))}
+                        {lateArr?.not_planned?.length > 0 && (
+                            <div className="text-[10px] uppercase tracking-widest text-zinc-500 pt-2 border-t border-white/10">
+                                Not planned for today
+                            </div>
+                        )}
+                        {lateArr?.not_planned?.map((o) => (
+                            <OptionRow key={"np-" + o.line + "||" + o.detail} opt={o} onPick={assignLateArrival} notPlanned testid={`late-notplanned-${o.line}-${o.detail}`} />
+                        ))}
+                        {lateArr && lateArr.planned.length === 0 && lateArr.not_planned.length === 0 && (
+                            <div className="text-center text-zinc-500 py-6 text-sm">No skill-matching tasks available today.</div>
+                        )}
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setLateArr(null)} data-testid="late-arrival-cancel" className="rounded-none border-white/15 text-white bg-transparent hover:bg-white/10 uppercase text-xs tracking-widest">
+                            Cancel
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Displaced conflict dialog */}
+            <Dialog open={!!displaceConflict} onOpenChange={(o) => !o && setDisplaceConflict(null)}>
+                <DialogContent className="rounded-none bg-[#111] border-red-500/40 text-white max-w-2xl" data-testid="conflict-dialog">
+                    <DialogHeader>
+                        <DialogTitle className="font-chivo uppercase tracking-tight flex items-center gap-2 text-red-300">
+                            <AlertCircle className="w-5 h-5" /> Conflict — {displaceConflict?.displaced?.name} Needs A New Spot
+                        </DialogTitle>
+                        <DialogDescription className="text-xs text-zinc-400">
+                            No auto-match found. Pick a task below to reassign, or Undo to revert.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="max-h-[380px] overflow-y-auto -mx-6 px-6 space-y-1.5">
+                        {displaceConflict?.displaced?.options?.length === 0 && (
+                            <div className="text-center text-zinc-500 py-6 text-sm">No skill-matching tasks left. Consider Undo.</div>
+                        )}
+                        {displaceConflict?.displaced?.options?.map((o) => (
+                            <OptionRow key={"c-" + o.line + "||" + o.detail} opt={o} onPick={resolveDisplaced} testid={`conflict-opt-${o.line}-${o.detail}`} />
+                        ))}
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => { setDisplaceConflict(null); doUndo(); }} data-testid="conflict-undo" className="rounded-none border-white/15 text-white bg-transparent hover:bg-white/10 uppercase text-xs tracking-widest">
+                            <Undo2 className="w-4 h-4 mr-2" /> Undo Late Arrival
+                        </Button>
+                        <Button variant="outline" onClick={() => setDisplaceConflict(null)} data-testid="conflict-close" className="rounded-none border-white/15 text-white bg-transparent hover:bg-white/10 uppercase text-xs tracking-widest">
+                            Close
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             {/* Edit Dialog */}
             <Dialog open={!!editCell} onOpenChange={(o) => !o && closeEdit()}>
                 <DialogContent
@@ -797,6 +982,116 @@ export default function BoardPage() {
                             onCancel={closeEdit}
                         />
                     )}
+                </DialogContent>
+            </Dialog>
+
+            {/* Fill Shortages Preview Dialog */}
+            <Dialog open={!!fillPreview} onOpenChange={(o) => !o && !fillApplying && setFillPreview(null)}>
+                <DialogContent className="rounded-none border-zinc-800 bg-[#0f0f0f] text-zinc-100 max-w-3xl max-h-[85vh] overflow-hidden flex flex-col" data-testid="fill-preview-dialog">
+                    <DialogHeader>
+                        <DialogTitle className="font-chivo uppercase tracking-tight text-2xl">
+                            Fill Shortages — Preview
+                        </DialogTitle>
+                        <DialogDescription className="text-zinc-400">
+                            Review proposed changes before applying. Nothing on the board changes until you confirm.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {fillPreview && (
+                        <>
+                            <div className="grid grid-cols-3 gap-3 mb-3">
+                                <div className="border border-zinc-800 px-4 py-3">
+                                    <div className="text-[10px] uppercase tracking-widest text-zinc-500">Starting shortage</div>
+                                    <div className="text-2xl font-bold" data-testid="fill-preview-initial">{fillPreview.initial_shortage}</div>
+                                </div>
+                                <div className="border border-emerald-800 bg-emerald-950/20 px-4 py-3">
+                                    <div className="text-[10px] uppercase tracking-widest text-emerald-500">Will be filled</div>
+                                    <div className="text-2xl font-bold text-emerald-400" data-testid="fill-preview-filled">{fillPreview.filled_count}</div>
+                                </div>
+                                <div className={`border px-4 py-3 ${fillPreview.remaining_shortage > 0 ? "border-red-800 bg-red-950/20" : "border-zinc-800"}`}>
+                                    <div className="text-[10px] uppercase tracking-widest text-zinc-500">Still short</div>
+                                    <div className={`text-2xl font-bold ${fillPreview.remaining_shortage > 0 ? "text-red-400" : ""}`} data-testid="fill-preview-remaining">{fillPreview.remaining_shortage}</div>
+                                </div>
+                            </div>
+
+                            <div className="overflow-y-auto border border-zinc-800 flex-1" data-testid="fill-preview-changes">
+                                <table className="w-full text-sm">
+                                    <thead className="sticky top-0 bg-[#111] z-10">
+                                        <tr>
+                                            <th className="text-left px-3 py-2 text-[10px] uppercase tracking-widest text-zinc-400">Cell</th>
+                                            <th className="text-left px-3 py-2 text-[10px] uppercase tracking-widest text-emerald-400">Assign</th>
+                                            <th className="text-left px-3 py-2 text-[10px] uppercase tracking-widest text-orange-400">Displaced from cell</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {fillPreview.changes.map((c, idx) => (
+                                            <tr key={idx} className="border-t border-zinc-800 align-top" data-testid={`fill-preview-row-${idx}`}>
+                                                <td className="px-3 py-2">
+                                                    <div className="font-bold uppercase tracking-wide text-xs text-zinc-200">{c.line_key}</div>
+                                                    <div className="text-zinc-400 text-xs">{c.row_name} · {c.detail}</div>
+                                                    {c.now_short && (
+                                                        <div className="text-red-400 text-[10px] uppercase mt-1">Still short by {c.shortage_after}</div>
+                                                    )}
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    {c.added.length === 0 ? <span className="text-zinc-600">—</span> : (
+                                                        <ul className="space-y-1">
+                                                            {c.added.map((p) => (
+                                                                <li key={p.id} className="text-emerald-300 text-xs">+ {p.name}</li>
+                                                            ))}
+                                                        </ul>
+                                                    )}
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    {c.removed.length === 0 ? <span className="text-zinc-600">—</span> : (
+                                                        <ul className="space-y-1">
+                                                            {c.removed.map((p) => (
+                                                                <li key={p.id} className="text-orange-300 text-xs">− {p.name}</li>
+                                                            ))}
+                                                        </ul>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </>
+                    )}
+
+                    <DialogFooter className="mt-3">
+                        <Button
+                            variant="outline"
+                            className="rounded-none border-zinc-700 text-zinc-300 hover:bg-zinc-900 uppercase tracking-widest text-xs"
+                            disabled={fillApplying}
+                            onClick={() => setFillPreview(null)}
+                            data-testid="fill-preview-cancel"
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            className="rounded-none bg-emerald-500 hover:bg-emerald-500/85 text-black uppercase tracking-widest text-xs font-bold"
+                            disabled={fillApplying || !fillPreview || fillPreview.filled_count === 0}
+                            onClick={async () => {
+                                setFillApplying(true);
+                                try {
+                                    const r = await fillShortages(date, shift);
+                                    const filled = (fillPreview?.initial_shortage || 0) - (r.total_shortage || 0);
+                                    if (filled > 0) toast.success(`Filled ${filled} of ${fillPreview.initial_shortage} shortages`);
+                                    else toast.info("No shortages were filled");
+                                    setFillPreview(null);
+                                    load();
+                                } catch (e) {
+                                    toast.error(e.response?.data?.detail || e.message);
+                                } finally {
+                                    setFillApplying(false);
+                                }
+                            }}
+                            data-testid="fill-preview-confirm"
+                        >
+                            <CheckCircle2 className="w-4 h-4 mr-2" /> {fillApplying ? "Applying…" : "Confirm & Apply"}
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </div>
@@ -1020,6 +1315,36 @@ function PersonPicker({
                     Save
                 </Button>
             </DialogFooter>
+        </div>
+    );
+}
+
+function OptionRow({ opt, onPick, notPlanned, testid }) {
+    const short = opt.shortage > 0;
+    return (
+        <div
+            className={`flex items-center justify-between border ${short ? "border-red-500/40 bg-red-500/5" : notPlanned ? "border-zinc-700 bg-zinc-500/5" : "border-white/10"} px-3 py-2`}
+            data-testid={testid}
+        >
+            <div className="min-w-0">
+                <div className="text-sm font-semibold">
+                    {opt.line} <span className="text-zinc-500">· {opt.row_name}</span>
+                </div>
+                <div className="text-[11px] text-zinc-400 truncate">{opt.detail}</div>
+                <div className="text-[10px] uppercase tracking-widest mt-0.5">
+                    {short ? <span className="text-red-400">Short by {opt.shortage}</span> : (
+                        <span className="text-zinc-500">{opt.assigned_count}/{opt.required}</span>
+                    )}
+                    {notPlanned && <span className="ml-2 text-amber-400">· Not planned for today</span>}
+                </div>
+            </div>
+            <Button
+                onClick={() => onPick(opt)}
+                className="rounded-none bg-[#3B6AB8] hover:bg-[#3B6AB8]/85 uppercase text-xs tracking-widest"
+                data-testid={`${testid}-btn`}
+            >
+                Assign
+            </Button>
         </div>
     );
 }

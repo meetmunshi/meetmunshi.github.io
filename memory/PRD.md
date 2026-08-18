@@ -35,6 +35,8 @@
 ## Implemented (dates)
 - 2026-02-15 (v1): row = detail, no priority/runs, single date scheduling.
 - 2026-07-16 (v2): row = row_name; priority + run_count; shift; absent bottom row; click-to-adjust manual override with persistence; Analytics; History calendar; PDF via browser print.
+- 2026-02 (v3): Late Arrival with displacement/conflict resolution + one-step Undo.
+- 2026-02 (v4): Fill Shortages Preview — proposed changes shown in a dialog with per-cell added/displaced diff; Confirm applies, Cancel discards. Backend adds `?preview=true` to `POST /api/schedule/{date}/fill-shortages`.
 
 ## Testing
 - Iteration 2 test report: 100% backend + frontend pass, all 18 scenarios (including priority ordering proof, run duplication with no overlap, adjust set/clear behavior, shift isolation, export filename).
