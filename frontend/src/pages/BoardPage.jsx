@@ -1046,9 +1046,9 @@ export default function BoardPage() {
                                                 <span
                                                     aria-label="Edit cell"
                                                     data-testid={`mobile-cell-edit-${rn}-${k}`}
-                                                    className="inline-flex items-center gap-1 border border-white/20 bg-white/5 text-zinc-200 px-2 py-1 text-[10px] uppercase tracking-widest"
+                                                    className="inline-flex items-center justify-center border border-white/20 bg-white/5 text-zinc-200 p-1.5"
                                                 >
-                                                    <Pencil className="w-3 h-3" /> Edit
+                                                    <Pencil className="w-3.5 h-3.5" />
                                                 </span>
                                             </div>
                                         </div>
@@ -1124,9 +1124,9 @@ export default function BoardPage() {
                                                     <span
                                                         aria-label="Edit cell"
                                                         data-testid={`mobile-support-cell-edit-${a.line}-${a.row_name}`}
-                                                        className="shrink-0 inline-flex items-center gap-1 border border-white/20 bg-white/5 text-zinc-200 px-2 py-1 text-[10px] uppercase tracking-widest"
+                                                        className="shrink-0 inline-flex items-center justify-center border border-white/20 bg-white/5 text-zinc-200 p-1.5"
                                                     >
-                                                        <Pencil className="w-3 h-3" /> Edit
+                                                        <Pencil className="w-3.5 h-3.5" />
                                                     </span>
                                                 </div>
                                             );
