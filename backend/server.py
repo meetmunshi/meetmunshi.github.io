@@ -375,6 +375,10 @@ async def generate_schedule(req: ScheduleRequest):
     details = await db.line_details.find({}, {"_id": 0}).to_list(1000)
     if not persons or not details:
         raise HTTPException(400, "No data seeded.")
+    # Canonicalise incoming line names (E2 vs "Element 2" etc.)
+    master_lines = {d["line"] for d in details}
+    for cfg in req.line_configs:
+        cfg.line = _canonical_line(cfg.line, master_lines)
     assignments = _generate_assignments(
         persons, details, req.line_configs, req.absent_person_ids,
         req.overrides, req.unassigned_keys, req.required_overrides,
@@ -409,6 +413,29 @@ class AutoPlanRequest(BaseModel):
 
 def _skill_totals(persons: List[dict]) -> Dict[str, int]:
     return {p["id"]: sum(1 for v in p.get("skills", {}).values() if v) for p in persons}
+
+
+# Known aliases → canonical (lowercase key matches). Add here as data drift is spotted.
+LINE_ALIASES_LOWER: Dict[str, str] = {
+    "element 2": "E2",
+    "element2": "E2",
+}
+
+
+def _canonical_line(name: str, master_lines: set) -> str:
+    """Return the canonical line name from the master list, resolving aliases and casing."""
+    if not name:
+        return name
+    if name in master_lines:
+        return name
+    key = name.strip().lower()
+    alias = LINE_ALIASES_LOWER.get(key)
+    if alias and alias in master_lines:
+        return alias
+    for m in master_lines:
+        if m.lower() == key:
+            return m
+    return name
 
 
 def _group_details_by_line(details: List[dict]) -> Dict[str, List[dict]]:
@@ -1258,6 +1285,7 @@ async def monthly_analytics(month: Optional[str] = None):
 
     persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
     p_by_id = {p["id"]: p for p in persons}
+    master_lines = set(await db.line_details.distinct("line"))
 
     # --- 1) Top absentees
     absentee_counts: Dict[str, int] = defaultdict(int)
@@ -1291,7 +1319,8 @@ async def monthly_analytics(month: Optional[str] = None):
         short_lines_today: Dict[str, int] = defaultdict(int)
         for a in s.get("assignments", []):
             if a.get("shortage", 0) > 0:
-                short_lines_today[a["line"]] += a["shortage"]
+                line = _canonical_line(a["line"], master_lines)
+                short_lines_today[line] += a["shortage"]
         for line, tot in short_lines_today.items():
             line_absence_days[line] += 1
             line_absence_shortage[line] += tot
@@ -1301,13 +1330,16 @@ async def monthly_analytics(month: Optional[str] = None):
         for line, days in sorted(line_absence_days.items(), key=lambda x: (-x[1], -line_absence_shortage[x[0]]))
     ]
 
-    # --- 3) Line utilisation: days each line was scheduled
-    line_days: Dict[str, set] = defaultdict(set)
+    # --- 3) Line utilisation: days each line was scheduled (include ALL master lines)
+    line_days: Dict[str, set] = {line: set() for line in master_lines}
     all_days: set = set()
     for s in docs:
         all_days.add(s["date"])
         for cfg in s.get("line_configs", []):
-            line_days[cfg["line"]].add(s["date"])
+            line = _canonical_line(cfg["line"], master_lines)
+            if line not in line_days:
+                line_days[line] = set()
+            line_days[line].add(s["date"])
     days_with_schedule = len(all_days)
     line_utilisation = [
         {
@@ -1315,7 +1347,7 @@ async def monthly_analytics(month: Optional[str] = None):
             "days_run": len(dates),
             "utilisation_pct": round((len(dates) / days_with_schedule) * 100) if days_with_schedule else 0,
         }
-        for line, dates in sorted(line_days.items(), key=lambda x: -len(x[1]))
+        for line, dates in sorted(line_days.items(), key=lambda x: (-len(x[1]), x[0]))
     ]
 
     return {
@@ -1443,8 +1475,44 @@ async def on_startup():
             await db.schedules.delete_many({})
             logger.info("Old data lacked row_name; wiped for re-seed")
         await seed_from_file_if_empty()
+        await _migrate_canonical_line_names()
     except Exception as e:
         logger.exception(f"Seeding failed: {e}")
+
+
+async def _migrate_canonical_line_names():
+    """One-time migration: rewrite any legacy/aliased line names in existing schedules."""
+    master = set(await db.line_details.distinct("line"))
+    if not master:
+        return
+    cursor = db.schedules.find({})
+    async for s in cursor:
+        changed = False
+        for cfg in s.get("line_configs", []):
+            canon = _canonical_line(cfg.get("line", ""), master)
+            if canon != cfg.get("line"):
+                cfg["line"] = canon
+                changed = True
+        for a in s.get("assignments", []):
+            canon = _canonical_line(a.get("line", ""), master)
+            if canon != a.get("line"):
+                a["line"] = canon
+                changed = True
+            # line_key = line for base run, or "{line} #N"
+            lk = a.get("line_key", "")
+            if lk.startswith(a["line"]):
+                pass
+            else:
+                # legacy prefix — rebuild
+                if " #" in lk:
+                    _, tail = lk.split(" #", 1)
+                    a["line_key"] = f"{a['line']} #{tail}"
+                else:
+                    a["line_key"] = a["line"]
+                changed = True
+        if changed:
+            await db.schedules.replace_one({"_id": s["_id"]}, s)
+            logger.info(f"Canonicalised line names in schedule {s.get('date')} {s.get('shift')}")
 
 
 @app.on_event("shutdown")

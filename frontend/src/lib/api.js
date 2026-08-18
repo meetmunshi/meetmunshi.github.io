@@ -11,6 +11,8 @@ export const fetchStats = () => api.get("/stats").then((r) => r.data);
 export const fetchSchedule = (date, shift = "day") =>
     api.get(`/schedule/${date}`, { params: { shift } }).then((r) => r.data);
 export const fetchSchedules = () => api.get("/schedules").then((r) => r.data);
+export const deleteSchedule = (date, shift = "day") =>
+    api.delete(`/schedule/${date}`, { params: { shift } }).then((r) => r.data);
 export const generateSchedule = (payload) =>
     api.post("/schedule", payload).then((r) => r.data);
 export const adjustCell = (date, payload) =>

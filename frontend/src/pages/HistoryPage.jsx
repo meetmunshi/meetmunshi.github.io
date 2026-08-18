@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchSchedules, absenteeismReportUrl } from "@/lib/api";
-import { ChevronLeft, ChevronRight, CalendarDays, Download, Lock } from "lucide-react";
+import { toast } from "sonner";
+import { fetchSchedules, absenteeismReportUrl, deleteSchedule } from "@/lib/api";
+import { ChevronLeft, ChevronRight, CalendarDays, Download, Lock, Trash2 } from "lucide-react";
 
 export default function HistoryPage() {
     const [items, setItems] = useState([]);
@@ -10,9 +11,22 @@ export default function HistoryPage() {
         return { y: d.getFullYear(), m: d.getMonth() };
     });
 
-    useEffect(() => {
-        fetchSchedules().then(setItems);
-    }, []);
+    const load = () => fetchSchedules().then(setItems);
+    useEffect(() => { load(); }, []);
+
+    const handleDelete = async (date, shift, logged) => {
+        const warn = logged
+            ? `⚠ This schedule is LOGGED (frozen for absenteeism reporting).\n\nDelete ${date} · ${shift.toUpperCase()} anyway? This cannot be undone.`
+            : `Delete ${date} · ${shift.toUpperCase()} schedule?\n\nThis removes all assignments, absentees, and logs for this day/shift.`;
+        if (!window.confirm(warn)) return;
+        try {
+            await deleteSchedule(date, shift);
+            toast.success(`Deleted ${date} · ${shift}`);
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || e.message);
+        }
+    };
 
     const byDate = useMemo(() => {
         const m = {};
@@ -104,35 +118,52 @@ export default function HistoryPage() {
                         if (!c) return <div key={i} className="min-h-24 border-r border-b border-white/5 bg-[#0a0a0a]/50" />;
                         const has = c.schedules.length > 0;
                         return (
-                            <Link
+                            <div
                                 key={i}
-                                to={`/board?date=${c.iso}&shift=${c.schedules[0]?.shift || "day"}`}
                                 data-testid={`cal-cell-${c.iso}`}
-                                className={`min-h-24 border-r border-b border-white/5 p-2 hover:bg-white/5 transition ${
+                                className={`min-h-24 border-r border-b border-white/5 p-2 flex flex-col ${
                                     has ? "bg-[#3B6AB8]/5" : "bg-[#0a0a0a]"
                                 }`}
                             >
                                 <div className="flex items-center justify-between mb-1">
-                                    <span className="font-mono-ibm text-sm text-zinc-300">{c.d}</span>
-                                    {has && (
-                                        <CalendarDays className="w-3 h-3 text-[#3B6AB8]" />
-                                    )}
+                                    <Link
+                                        to={`/board?date=${c.iso}&shift=${c.schedules[0]?.shift || "day"}`}
+                                        className="font-mono-ibm text-sm text-zinc-300 hover:text-white"
+                                        data-testid={`cal-cell-date-${c.iso}`}
+                                    >
+                                        {c.d}
+                                    </Link>
+                                    {has && <CalendarDays className="w-3 h-3 text-[#3B6AB8]" />}
                                 </div>
                                 {c.schedules.map((s) => (
                                     <div
                                         key={s.shift}
-                                        className="text-[10px] uppercase tracking-widest text-zinc-400 mb-0.5 flex items-center gap-1"
+                                        className="text-[10px] uppercase tracking-widest text-zinc-400 mb-0.5 flex items-center justify-between gap-1 group"
+                                        data-testid={`cal-shift-${c.iso}-${s.shift}`}
                                     >
-                                        <span className="text-[#3B6AB8]">{s.shift}</span>
-                                        {s.logged_at && (
-                                            <Lock className="w-2.5 h-2.5 text-emerald-400" />
-                                        )}
-                                        {s.total_shortage > 0 && (
-                                            <span className="ml-1 text-red-400">−{s.total_shortage}</span>
-                                        )}
+                                        <Link
+                                            to={`/board?date=${c.iso}&shift=${s.shift}`}
+                                            className="flex items-center gap-1 flex-1 min-w-0 hover:text-white"
+                                        >
+                                            <span className="text-[#3B6AB8]">{s.shift}</span>
+                                            {s.logged_at && <Lock className="w-2.5 h-2.5 text-emerald-400" />}
+                                            {s.total_shortage > 0 && (
+                                                <span className="ml-1 text-red-400">−{s.total_shortage}</span>
+                                            )}
+                                        </Link>
+                                        <button
+                                            type="button"
+                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDelete(c.iso, s.shift, !!s.logged_at); }}
+                                            title={`Delete ${c.iso} ${s.shift}`}
+                                            aria-label={`Delete ${c.iso} ${s.shift}`}
+                                            data-testid={`delete-schedule-${c.iso}-${s.shift}`}
+                                            className="opacity-60 md:opacity-0 md:group-hover:opacity-100 hover:opacity-100 text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-500 bg-red-500/5 hover:bg-red-500/15 p-0.5"
+                                        >
+                                            <Trash2 className="w-3 h-3" />
+                                        </button>
                                     </div>
                                 ))}
-                            </Link>
+                            </div>
                         );
                     })}
                 </div>
