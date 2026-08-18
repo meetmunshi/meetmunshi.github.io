@@ -434,6 +434,104 @@ def _pick_specialists(
     return eligible[:limit]
 
 
+def _max_bipartite_matching(
+    cells: List[dict],
+    persons: List[dict],
+    absent_set: set,
+    skill_totals: Dict[str, int],
+    initial: Optional[Dict[int, List[str]]] = None,
+) -> Dict[int, List[str]]:
+    """Global maximum bipartite matching between (cell seats) and (available persons).
+
+    - Every cell contributes `required` seats.
+    - A person can fill a seat iff person.skills[cell.detail] is truthy.
+    - Each person is used at most once.
+    - Kuhn's algorithm (augmenting paths); seats iterated by scarcity ASC, candidates
+      ordered by skill_total ASC (specialist-first) — so rarest skills claim
+      specialists first, matching the existing scheduling philosophy.
+    - If `initial` is provided, the matching is seeded with those assignments and only
+      empty/short seats are augmented — this minimises reshuffles: an already-matched
+      person only moves if an augmenting path proves the move is necessary to fill
+      another seat.
+
+    Returns: {cell_index: [person_id, ...]}
+    """
+    # Expand seats
+    seats: List[Tuple[int, int]] = []  # (cell_index, seat_index_within_cell)
+    for ci, c in enumerate(cells):
+        for r in range(int(c.get("required", 0))):
+            seats.append((ci, r))
+
+    persons_avail = [p for p in persons if p["id"] not in absent_set]
+    avail_ids = {p["id"] for p in persons_avail}
+
+    # Scarcity per detail (fewer eligible = rarer)
+    scarcity: Dict[str, int] = {}
+    for c in cells:
+        d = c["detail"]
+        if d in scarcity:
+            continue
+        scarcity[d] = sum(
+            1 for p in persons_avail if bool(p.get("skills", {}).get(d))
+        )
+
+    # Order seats: rarest skill first, then by cell index for stability
+    seats.sort(key=lambda s: (scarcity.get(cells[s[0]]["detail"], 0), s[0], s[1]))
+
+    # Adjacency per seat: specialist-first (fewer skills), stable by name
+    adj: Dict[Tuple[int, int], List[str]] = {}
+    for s in seats:
+        d = cells[s[0]]["detail"]
+        elig = [p for p in persons_avail if bool(p.get("skills", {}).get(d))]
+        elig.sort(key=lambda p: (skill_totals.get(p["id"], 0), p.get("name", "")))
+        adj[s] = [p["id"] for p in elig]
+
+    match_seat: Dict[Tuple[int, int], str] = {}
+    match_person: Dict[str, Tuple[int, int]] = {}
+
+    # Seed matching from current schedule (skip absents / unqualified)
+    if initial:
+        for ci, pids in initial.items():
+            req = int(cells[ci].get("required", 0))
+            d = cells[ci]["detail"]
+            person_map = {p["id"]: p for p in persons_avail}
+            slot_index = 0
+            for pid in pids:
+                if slot_index >= req:
+                    break
+                if pid not in avail_ids or pid in match_person:
+                    continue
+                p = person_map.get(pid)
+                if not p or not bool(p.get("skills", {}).get(d)):
+                    continue
+                seat = (ci, slot_index)
+                match_seat[seat] = pid
+                match_person[pid] = seat
+                slot_index += 1
+
+    def try_augment(seat: Tuple[int, int], visited: set) -> bool:
+        for pid in adj[seat]:
+            if pid in visited:
+                continue
+            visited.add(pid)
+            if pid not in match_person or try_augment(match_person[pid], visited):
+                match_seat[seat] = pid
+                match_person[pid] = seat
+                return True
+        return False
+
+    # Only augment seats that are still empty
+    for s in seats:
+        if s in match_seat:
+            continue
+        try_augment(s, set())
+
+    result: Dict[int, List[str]] = {ci: [] for ci in range(len(cells))}
+    for (ci, _r), pid in match_seat.items():
+        result[ci].append(pid)
+    return result
+
+
 def _simulate_line_fill(
     line_details: List[dict],
     persons: List[dict],
@@ -610,105 +708,21 @@ async def fill_shortages(date: str, shift: str = "day", preview: bool = False):
     def cell_key(a: dict) -> str:
         return f"{a['row_name']}||{a['line_key']}||{a['detail']}"
 
-    def persist(a: dict):
+    # Global maximum bipartite matching across ALL cells & available persons.
+    # Seeded with current assignments so reshuffles only happen when needed.
+    cells_input = [{"detail": a["detail"], "required": a["required"]} for a in assignments]
+    initial_match = {ci: list(a["assigned_person_ids"]) for ci, a in enumerate(assignments)}
+    optimal = _max_bipartite_matching(cells_input, persons, absent_set, skill_totals, initial=initial_match)
+    for ci, a in enumerate(assignments):
+        a["assigned_person_ids"] = optimal.get(ci, [])
         overrides[cell_key(a)] = a["assigned_person_ids"]
         unassigned.add(cell_key(a))
-
-    def is_short(a: dict) -> bool:
-        return len(a["assigned_person_ids"]) < a["required"]
-
-    def excess_count(a: dict) -> int:
-        return max(0, len(a["assigned_person_ids"]) - a["required"])
-
-    def used_ids() -> set:
-        u: set = set()
-        for a in assignments:
-            u.update(a["assigned_person_ids"])
-        return u
-
-    def scarcity(a: dict) -> int:
-        """How rare is this skill? Fewer = process first."""
-        return sum(
-            1 for p in persons
-            if bool(p.get("skills", {}).get(a["detail"])) and p["id"] not in absent_set
-        )
-
-    def try_fill_from_free(cell: dict) -> bool:
-        need = cell["required"] - len(cell["assigned_person_ids"])
-        if need <= 0:
-            return False
-        excluded = absent_set | used_ids()
-        picks = _pick_specialists(cell["detail"], need, persons, skill_totals, excluded)
-        if not picks:
-            return False
-        cell["assigned_person_ids"].extend(p["id"] for p in picks)
-        persist(cell)
-        return True
-
-    def try_borrow(cell: dict) -> bool:
-        made_progress = False
-        for donor in assignments:
-            if donor is cell or excess_count(donor) <= 0:
-                continue
-            for pid in list(donor["assigned_person_ids"]):
-                if not is_short(cell):
-                    return made_progress
-                if excess_count(donor) <= 0:
-                    break
-                p = person_by_id.get(pid)
-                if not p or not bool(p.get("skills", {}).get(cell["detail"])):
-                    continue
-                donor["assigned_person_ids"].remove(pid)
-                cell["assigned_person_ids"].append(pid)
-                persist(donor)
-                persist(cell)
-                made_progress = True
-        return made_progress
-
-    def try_swap_chain(cell: dict) -> bool:
-        made_progress = False
-        for donor in assignments:
-            if donor is cell or excess_count(donor) > 0:
-                continue
-            for pid in list(donor["assigned_person_ids"]):
-                if not is_short(cell):
-                    return made_progress
-                p = person_by_id.get(pid)
-                if not p or not bool(p.get("skills", {}).get(cell["detail"])):
-                    continue
-                excluded = (absent_set | used_ids()) - {pid}
-                replacements = _pick_specialists(donor["detail"], 1, persons, skill_totals, excluded)
-                if not replacements or replacements[0]["id"] == pid:
-                    continue
-                donor["assigned_person_ids"].remove(pid)
-                donor["assigned_person_ids"].append(replacements[0]["id"])
-                cell["assigned_person_ids"].append(pid)
-                persist(donor)
-                persist(cell)
-                made_progress = True
-        return made_progress
-
-    # Loop until fixed point (bounded to avoid infinite loops)
-    for _ in range(5):
-        progressed = False
-        short_cells = sorted([a for a in assignments if is_short(a)], key=scarcity)
-        if not short_cells:
-            break
-        for cell in short_cells:
-            if try_fill_from_free(cell):
-                progressed = True
-            if is_short(cell) and try_borrow(cell):
-                progressed = True
-            if is_short(cell) and try_swap_chain(cell):
-                progressed = True
-        if not progressed:
-            break
 
     if preview:
         # Build diff without persisting
         changes = []
         for a in assignments:
-            key = f"{a['row_name']}||{a['line_key']}||{a['detail']}"
+            key = cell_key(a)
             before = set(initial_state[key]["assigned"])
             after = set(a["assigned_person_ids"])
             added = after - before
