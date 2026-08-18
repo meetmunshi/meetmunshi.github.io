@@ -991,11 +991,12 @@ export default function BoardPage() {
                                     const hasMatchedPerson = ids.some((id) => matchedIds && matchedIds.has(id));
                                     const cellDim = filterActive && (!detailMatch || (filters.q.trim() && !hasMatchedPerson));
                                     return (
-                                        <button
+                                        <div
                                             key={rn}
-                                            type="button"
+                                            role="button"
+                                            tabIndex={0}
                                             onClick={() => openEdit(items.length === 1 ? items[0] : items)}
-                                            className={`w-full text-left px-3 py-2.5 flex items-start justify-between gap-2 active:bg-white/5 ${
+                                            className={`w-full text-left px-3 py-2.5 flex items-start justify-between gap-2 active:bg-white/5 cursor-pointer ${
                                                 shortage > 0 ? "bg-red-950/25" : ""
                                             } ${cellDim ? "opacity-25" : ""}`}
                                             data-testid={`mobile-cell-${rn}-${k}`}
@@ -1005,20 +1006,31 @@ export default function BoardPage() {
                                                 {names.length === 0 ? (
                                                     <div className="text-sm italic text-zinc-600">unassigned</div>
                                                 ) : (
-                                                    <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+                                                    <div className="flex flex-col gap-1">
                                                         {names.map((n, i) => {
                                                             const isMatch = matchedIds && matchedIds.has(ids[i]);
                                                             return (
-                                                                <span
-                                                                    key={i}
-                                                                    className={`text-sm font-semibold ${
-                                                                        filterActive && isMatch
-                                                                            ? "bg-yellow-400/25 ring-1 ring-yellow-400 px-1"
-                                                                            : (filterActive && !isMatch ? "text-white/40" : "text-white")
-                                                                    }`}
-                                                                >
-                                                                    {n}
-                                                                </span>
+                                                                <div key={i} className="flex items-center justify-between gap-2">
+                                                                    <span
+                                                                        className={`text-sm font-semibold ${
+                                                                            filterActive && isMatch
+                                                                                ? "bg-yellow-400/25 ring-1 ring-yellow-400 px-1"
+                                                                                : (filterActive && !isMatch ? "text-white/40" : "text-white")
+                                                                        }`}
+                                                                    >
+                                                                        {n}
+                                                                    </span>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={(e) => { e.stopPropagation(); handleQuickAbsent(ids[i], n); }}
+                                                                        title="Mark absent"
+                                                                        aria-label={`Mark ${n} absent`}
+                                                                        data-testid={`mobile-quick-absent-${ids[i]}`}
+                                                                        className="shrink-0 p-1.5 text-red-400 active:bg-red-500/20 border border-red-500/40 bg-red-500/5"
+                                                                    >
+                                                                        <UserX className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                </div>
                                                             );
                                                         })}
                                                     </div>
@@ -1029,10 +1041,17 @@ export default function BoardPage() {
                                                     </div>
                                                 )}
                                             </div>
-                                            <div className="text-[10px] font-mono-ibm text-zinc-500 shrink-0">
-                                                {ids.length}/{required}
+                                            <div className="flex flex-col items-end gap-1 shrink-0">
+                                                <span className="text-[10px] font-mono-ibm text-zinc-500">{ids.length}/{required}</span>
+                                                <span
+                                                    aria-label="Edit cell"
+                                                    data-testid={`mobile-cell-edit-${rn}-${k}`}
+                                                    className="inline-flex items-center gap-1 border border-white/20 bg-white/5 text-zinc-200 px-2 py-1 text-[10px] uppercase tracking-widest"
+                                                >
+                                                    <Pencil className="w-3 h-3" /> Edit
+                                                </span>
                                             </div>
-                                        </button>
+                                        </div>
                                     );
                                 })}
                                 {cellsInCol.length === 0 && (
@@ -1059,33 +1078,57 @@ export default function BoardPage() {
                                             const detailMatch = isDetailMatch(a.detail);
                                             const dim = filterActive && (!detailMatch || (filters.q.trim() && !hasMatchedPerson));
                                             return (
-                                                <button
+                                                <div
                                                     key={a.row_name + "||" + a.detail}
+                                                    role="button"
+                                                    tabIndex={0}
                                                     onClick={() => openEdit(a)}
-                                                    className={`w-full text-left px-2 py-1.5 border ${a.shortage > 0 ? "border-red-500 bg-red-950/25" : "border-white/5"} active:bg-white/5 ${dim ? "opacity-25" : ""}`}
+                                                    className={`w-full text-left px-2 py-1.5 border cursor-pointer flex items-start justify-between gap-2 ${a.shortage > 0 ? "border-red-500 bg-red-950/25" : "border-white/5"} active:bg-white/5 ${dim ? "opacity-25" : ""}`}
                                                     data-testid={`mobile-support-cell-${a.line}-${a.row_name}`}
                                                 >
-                                                    <div className="text-[10px] uppercase tracking-widest text-zinc-500">{a.row_name}</div>
-                                                    {a.assigned_person_names.length === 0 ? (
-                                                        <div className="text-sm italic text-zinc-600">unassigned</div>
-                                                    ) : (
-                                                        <div className="flex flex-wrap gap-x-2">
-                                                            {a.assigned_person_names.map((n, i) => {
-                                                                const isMatch = matchedIds && matchedIds.has(a.assigned_person_ids[i]);
-                                                                return (
-                                                                    <span key={i} className={`text-sm font-semibold ${
-                                                                        filterActive && isMatch
-                                                                            ? "bg-yellow-400/25 ring-1 ring-yellow-400 px-1"
-                                                                            : (filterActive && !isMatch ? "text-white/40" : "text-white")
-                                                                    }`}>{n}</span>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    )}
-                                                    {a.shortage > 0 && (
-                                                        <div className="text-[10px] uppercase tracking-widest text-red-400 font-bold mt-0.5">Short by {a.shortage}</div>
-                                                    )}
-                                                </button>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="text-[10px] uppercase tracking-widest text-zinc-500">{a.row_name}</div>
+                                                        {a.assigned_person_names.length === 0 ? (
+                                                            <div className="text-sm italic text-zinc-600">unassigned</div>
+                                                        ) : (
+                                                            <div className="flex flex-col gap-1">
+                                                                {a.assigned_person_names.map((n, i) => {
+                                                                    const pid = a.assigned_person_ids[i];
+                                                                    const isMatch = matchedIds && matchedIds.has(pid);
+                                                                    return (
+                                                                        <div key={i} className="flex items-center justify-between gap-2">
+                                                                            <span className={`text-sm font-semibold ${
+                                                                                filterActive && isMatch
+                                                                                    ? "bg-yellow-400/25 ring-1 ring-yellow-400 px-1"
+                                                                                    : (filterActive && !isMatch ? "text-white/40" : "text-white")
+                                                                            }`}>{n}</span>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={(e) => { e.stopPropagation(); handleQuickAbsent(pid, n); }}
+                                                                                title="Mark absent"
+                                                                                aria-label={`Mark ${n} absent`}
+                                                                                data-testid={`mobile-support-quick-absent-${pid}`}
+                                                                                className="shrink-0 p-1.5 text-red-400 active:bg-red-500/20 border border-red-500/40 bg-red-500/5"
+                                                                            >
+                                                                                <UserX className="w-3.5 h-3.5" />
+                                                                            </button>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        )}
+                                                        {a.shortage > 0 && (
+                                                            <div className="text-[10px] uppercase tracking-widest text-red-400 font-bold mt-0.5">Short by {a.shortage}</div>
+                                                        )}
+                                                    </div>
+                                                    <span
+                                                        aria-label="Edit cell"
+                                                        data-testid={`mobile-support-cell-edit-${a.line}-${a.row_name}`}
+                                                        className="shrink-0 inline-flex items-center gap-1 border border-white/20 bg-white/5 text-zinc-200 px-2 py-1 text-[10px] uppercase tracking-widest"
+                                                    >
+                                                        <Pencil className="w-3 h-3" /> Edit
+                                                    </span>
+                                                </div>
                                             );
                                         })}
                                     </div>
