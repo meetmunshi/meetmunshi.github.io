@@ -477,7 +477,7 @@ export default function BoardPage() {
     };
 
     return (
-        <div className={tvMode ? "p-4 bg-black min-h-screen" : "p-6 md:p-8"} ref={boardRef}>
+        <div className={tvMode ? "p-4 bg-black min-h-screen" : "p-4 sm:p-6 md:p-8"} ref={boardRef}>
             <header className="flex flex-wrap items-start justify-between gap-4 mb-5 no-print">
                 <div>
                     <div className="text-[10px] tracking-[0.3em] uppercase text-zinc-500 mb-1">
@@ -536,8 +536,8 @@ export default function BoardPage() {
                         data-testid="tv-mode-btn"
                         className="rounded-none border-white/15 text-white bg-transparent hover:bg-white/10 uppercase tracking-widest text-xs"
                     >
-                        <Maximize2 className="w-4 h-4 mr-2" />
-                        {tvMode ? "Exit TV" : "TV Mode"}
+                        <Maximize2 className="w-4 h-4 sm:mr-2" />
+                        <span className="hidden sm:inline">{tvMode ? "Exit TV" : "TV Mode"}</span>
                     </Button>
                     <Button
                         variant="outline"
@@ -545,7 +545,7 @@ export default function BoardPage() {
                         data-testid="screenshot-btn"
                         className="rounded-none border-white/15 text-white bg-transparent hover:bg-white/10 uppercase tracking-widest text-xs"
                     >
-                        <Camera className="w-4 h-4 mr-2" /> Snapshot
+                        <Camera className="w-4 h-4 sm:mr-2" /> <span className="hidden sm:inline">Snapshot</span>
                     </Button>
                     <Button
                         variant="outline"
@@ -553,11 +553,11 @@ export default function BoardPage() {
                         data-testid="print-btn"
                         className="rounded-none border-white/15 text-white bg-transparent hover:bg-white/10 uppercase tracking-widest text-xs"
                     >
-                        <Printer className="w-4 h-4 mr-2" /> Print / PDF
+                        <Printer className="w-4 h-4 sm:mr-2" /> <span className="hidden sm:inline">Print / PDF</span>
                     </Button>
                     <a href={exportScheduleUrl(date, shift)} data-testid="export-xlsx-btn">
                         <Button className="rounded-none bg-[#3B6AB8] hover:bg-[#3B6AB8]/85 uppercase tracking-widest text-xs">
-                            <Download className="w-4 h-4 mr-2" /> Excel
+                            <Download className="w-4 h-4 sm:mr-2" /> <span className="hidden sm:inline">Excel</span>
                         </Button>
                     </a>
                     <Button
@@ -597,7 +597,7 @@ export default function BoardPage() {
 
             {/* Search + Filter bar */}
             <div className="flex flex-wrap items-center gap-2 mb-4 no-print" data-testid="board-filter-bar">
-                <div className="flex items-center border border-white/10 bg-[#111] px-3 py-2 min-w-[220px] flex-1">
+                <div className="flex items-center border border-white/10 bg-[#111] px-3 py-2 min-w-[180px] flex-1 basis-full sm:basis-auto">
                     <svg className="w-4 h-4 text-zinc-500 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
                     <input
                         type="text"
@@ -612,7 +612,7 @@ export default function BoardPage() {
                     value={filters.skill}
                     onChange={(e) => setFilters((f) => ({ ...f, skill: e.target.value }))}
                     data-testid="board-filter-skill"
-                    className="bg-[#111] border border-white/10 px-3 py-2 text-sm rounded-none text-white uppercase tracking-wide min-w-[180px]"
+                    className="bg-[#111] border border-white/10 px-3 py-2 text-sm rounded-none text-white uppercase tracking-wide flex-1 sm:flex-none sm:min-w-[180px] min-w-0"
                 >
                     <option value="">All skills</option>
                     {skillOptions.map((s) => (
@@ -623,7 +623,7 @@ export default function BoardPage() {
                     value={filters.line}
                     onChange={(e) => setFilters((f) => ({ ...f, line: e.target.value }))}
                     data-testid="board-filter-line"
-                    className="bg-[#111] border border-white/10 px-3 py-2 text-sm rounded-none text-white uppercase tracking-wide min-w-[160px]"
+                    className="bg-[#111] border border-white/10 px-3 py-2 text-sm rounded-none text-white uppercase tracking-wide flex-1 sm:flex-none sm:min-w-[160px] min-w-0"
                 >
                     <option value="">All lines</option>
                     {colKeys.map((k) => (
@@ -678,7 +678,8 @@ export default function BoardPage() {
             )}
 
             {/* Matrix */}
-            <div className="overflow-x-auto print-board" data-testid="schedule-matrix">
+            {/* Matrix — desktop / print */}
+            <div className="hidden md:block overflow-x-auto print-board" data-testid="schedule-matrix">
                 <table className="w-full border-collapse" style={{ minWidth: colKeys.length * 170 + 240 }}>
                     <thead>
                         <tr>
@@ -941,6 +942,229 @@ export default function BoardPage() {
                         </tr>
                     </tbody>
                 </table>
+            </div>
+
+            {/* Matrix — mobile card view */}
+            <div className="md:hidden space-y-3" data-testid="schedule-mobile">
+                {colKeys.map((k) => {
+                    const cellsInCol = rowNames
+                        .map((rn) => {
+                            const items = matrix[rn + "||" + k];
+                            if (!items || items.length === 0) return null;
+                            const ids = [];
+                            const names = [];
+                            const seen = new Set();
+                            items.forEach((a) => {
+                                a.assigned_person_ids.forEach((pid, i) => {
+                                    if (seen.has(pid)) return;
+                                    seen.add(pid);
+                                    ids.push(pid);
+                                    names.push(a.assigned_person_names[i]);
+                                });
+                            });
+                            const required = items.reduce((s, a) => s + a.required, 0);
+                            const shortage = items.reduce((s, a) => s + a.shortage, 0);
+                            const detailMatch = items.some((a) => isDetailMatch(a.detail));
+                            return { rn, items, ids, names, required, shortage, detailMatch };
+                        })
+                        .filter(Boolean);
+                    const colMatch = isColMatch(k);
+                    if (filterActive && !colMatch) return null;
+                    const colShortage = cellsInCol.reduce((s, c) => s + c.shortage, 0);
+                    const colAssigned = cellsInCol.reduce((s, c) => s + c.ids.length, 0);
+                    const colRequired = cellsInCol.reduce((s, c) => s + c.required, 0);
+                    return (
+                        <div key={k} className="border border-white/10 bg-[#0a0a0a]" data-testid={`mobile-line-${k}`}>
+                            <div className="px-3 py-2 bg-[#111] border-b border-white/10 flex items-center justify-between">
+                                <div className="font-chivo font-bold uppercase tracking-tight text-lg">{k}</div>
+                                <div className="text-[10px] uppercase tracking-widest text-zinc-400 flex items-center gap-2">
+                                    <span>{colAssigned}/{colRequired}</span>
+                                    {colShortage > 0 && (
+                                        <span className="text-red-400 border border-red-500/50 bg-red-500/10 px-1.5 py-0.5">
+                                            −{colShortage}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="divide-y divide-white/5">
+                                {cellsInCol.map(({ rn, items, ids, names, required, shortage, detailMatch }) => {
+                                    const hasMatchedPerson = ids.some((id) => matchedIds && matchedIds.has(id));
+                                    const cellDim = filterActive && (!detailMatch || (filters.q.trim() && !hasMatchedPerson));
+                                    return (
+                                        <button
+                                            key={rn}
+                                            type="button"
+                                            onClick={() => openEdit(items.length === 1 ? items[0] : items)}
+                                            className={`w-full text-left px-3 py-2.5 flex items-start justify-between gap-2 active:bg-white/5 ${
+                                                shortage > 0 ? "bg-red-950/25" : ""
+                                            } ${cellDim ? "opacity-25" : ""}`}
+                                            data-testid={`mobile-cell-${rn}-${k}`}
+                                        >
+                                            <div className="flex-1 min-w-0">
+                                                <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-0.5">{rn}</div>
+                                                {names.length === 0 ? (
+                                                    <div className="text-sm italic text-zinc-600">unassigned</div>
+                                                ) : (
+                                                    <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+                                                        {names.map((n, i) => {
+                                                            const isMatch = matchedIds && matchedIds.has(ids[i]);
+                                                            return (
+                                                                <span
+                                                                    key={i}
+                                                                    className={`text-sm font-semibold ${
+                                                                        filterActive && isMatch
+                                                                            ? "bg-yellow-400/25 ring-1 ring-yellow-400 px-1"
+                                                                            : (filterActive && !isMatch ? "text-white/40" : "text-white")
+                                                                    }`}
+                                                                >
+                                                                    {n}
+                                                                </span>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                                {shortage > 0 && (
+                                                    <div className="mt-1 text-[10px] uppercase tracking-widest text-red-400 font-bold flex items-center gap-1">
+                                                        <AlertCircle className="w-3 h-3" /> Short by {shortage}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div className="text-[10px] font-mono-ibm text-zinc-500 shrink-0">
+                                                {ids.length}/{required}
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                                {cellsInCol.length === 0 && (
+                                    <div className="px-3 py-3 text-xs italic text-zinc-600">No details for this line</div>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })}
+
+                {/* Support Ops on mobile */}
+                {supportItems.some((s) => s.planned) && (
+                    <div className="border border-white/10 bg-[#0a0a0a]" data-testid="mobile-support-block">
+                        <div className="px-3 py-2 bg-[#111] border-b border-white/10 font-chivo font-bold uppercase tracking-tight text-lg">
+                            Support Ops
+                        </div>
+                        <div className="p-2 space-y-2">
+                            {supportItems.filter((s) => s.planned).map((s) => (
+                                <div key={s.line}>
+                                    <div className="text-[11px] font-chivo font-bold uppercase tracking-widest text-[#3B6AB8] mb-1">{s.line}</div>
+                                    <div className="space-y-1">
+                                        {s.assignments.map((a) => {
+                                            const hasMatchedPerson = (a.assigned_person_ids || []).some((id) => matchedIds && matchedIds.has(id));
+                                            const detailMatch = isDetailMatch(a.detail);
+                                            const dim = filterActive && (!detailMatch || (filters.q.trim() && !hasMatchedPerson));
+                                            return (
+                                                <button
+                                                    key={a.row_name + "||" + a.detail}
+                                                    onClick={() => openEdit(a)}
+                                                    className={`w-full text-left px-2 py-1.5 border ${a.shortage > 0 ? "border-red-500 bg-red-950/25" : "border-white/5"} active:bg-white/5 ${dim ? "opacity-25" : ""}`}
+                                                    data-testid={`mobile-support-cell-${a.line}-${a.row_name}`}
+                                                >
+                                                    <div className="text-[10px] uppercase tracking-widest text-zinc-500">{a.row_name}</div>
+                                                    {a.assigned_person_names.length === 0 ? (
+                                                        <div className="text-sm italic text-zinc-600">unassigned</div>
+                                                    ) : (
+                                                        <div className="flex flex-wrap gap-x-2">
+                                                            {a.assigned_person_names.map((n, i) => {
+                                                                const isMatch = matchedIds && matchedIds.has(a.assigned_person_ids[i]);
+                                                                return (
+                                                                    <span key={i} className={`text-sm font-semibold ${
+                                                                        filterActive && isMatch
+                                                                            ? "bg-yellow-400/25 ring-1 ring-yellow-400 px-1"
+                                                                            : (filterActive && !isMatch ? "text-white/40" : "text-white")
+                                                                    }`}>{n}</span>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    )}
+                                                    {a.shortage > 0 && (
+                                                        <div className="text-[10px] uppercase tracking-widest text-red-400 font-bold mt-0.5">Short by {a.shortage}</div>
+                                                    )}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Absent on mobile */}
+                <div className="border border-red-500/40 bg-red-950/20" data-testid="mobile-absent-block">
+                    <div className="px-3 py-2 bg-red-950/40 border-b border-red-500/30 flex items-center gap-2 text-red-200 uppercase tracking-widest text-xs font-bold">
+                        <UserX className="w-4 h-4" /> Absent · {absentPersons.length}
+                    </div>
+                    <div className="p-2">
+                        {absentPersons.length === 0 ? (
+                            <div className="text-xs italic text-zinc-500">Full attendance today</div>
+                        ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                                {absentPersons.map((p) => {
+                                    const isMatch = matchedIds && matchedIds.has(p.id);
+                                    const dim = filterActive && !isMatch;
+                                    return (
+                                        <span
+                                            key={p.id}
+                                            className={`inline-flex items-center gap-1 border text-xs px-2 py-1 ${
+                                                filterActive && isMatch
+                                                    ? "border-yellow-400 bg-yellow-400/20 text-yellow-100"
+                                                    : "border-red-500/40 bg-red-500/10 text-red-200"
+                                            } ${dim ? "opacity-25" : ""}`}
+                                        >
+                                            {p.name} {p.surname}
+                                            <button
+                                                type="button"
+                                                onClick={() => openLateArrival(p)}
+                                                title="Arrived late"
+                                                data-testid={`mobile-late-arrival-${p.id}`}
+                                                className="ml-1 text-emerald-400 border-l border-red-500/30 pl-1.5"
+                                            >
+                                                <UserCheck className="w-3 h-3" />
+                                            </button>
+                                        </span>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Unassigned on mobile */}
+                <div className="border border-amber-500/40 bg-amber-950/20" data-testid="mobile-unassigned-block">
+                    <div className="px-3 py-2 bg-amber-950/40 border-b border-amber-500/30 flex items-center gap-2 text-amber-200 uppercase tracking-widest text-xs font-bold">
+                        <UserPlus className="w-4 h-4" /> Unassigned · {unassignedPersons.length}
+                    </div>
+                    <div className="p-2">
+                        {unassignedPersons.length === 0 ? (
+                            <div className="text-xs italic text-zinc-500">Everyone allocated</div>
+                        ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                                {unassignedPersons.map((p) => {
+                                    const isMatch = matchedIds && matchedIds.has(p.id);
+                                    const dim = filterActive && !isMatch;
+                                    return (
+                                        <span
+                                            key={p.id}
+                                            className={`inline-flex items-center border text-xs px-2 py-1 ${
+                                                filterActive && isMatch
+                                                    ? "border-yellow-400 bg-yellow-400/20 text-yellow-100"
+                                                    : "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                                            } ${dim ? "opacity-25" : ""}`}
+                                        >
+                                            {p.name} {p.surname}
+                                        </span>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
             </div>
 
             {/* Suggestions Dialog */}

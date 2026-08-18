@@ -38,6 +38,7 @@
 - 2026-02 (v3): Late Arrival with displacement/conflict resolution + one-step Undo.
 - 2026-02 (v4): Fill Shortages Preview — proposed changes shown in a dialog with per-cell added/displaced diff; Confirm applies, Cancel discards. Backend adds `?preview=true` to `POST /api/schedule/{date}/fill-shortages`.
 - 2026-02 (v5): Board Search & Filter bar — search worker by name, filter by skill or line; matching names get a yellow highlight, non-matches dimmed (matrix cells, Support Ops, Absent, Unassigned). Setup default priority for "Spares" line forced to 1.
+- 2026-02 (v6): Mobile Board — desktop matrix hidden below md; new card view stacks a card per active line (with per-area rows, shortage flags, tap-to-assign) plus Support Ops, Absent (with Late Arrival), and Unassigned sections. Toolbar buttons collapse to icon-only for non-essential actions; filter bar wraps across rows on small screens.
 
 ## Testing
 - Iteration 2 test report: 100% backend + frontend pass, all 18 scenarios (including priority ordering proof, run duplication with no overlap, adjust set/clear behavior, shift isolation, export filename).
