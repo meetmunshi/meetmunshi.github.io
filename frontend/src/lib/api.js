@@ -41,6 +41,7 @@ export const uploadExcel = (file) => {
     const fd = new FormData();
     fd.append("file", file);
     return api.post("/upload-excel", fd, {
+        params: { confirm: true },
         headers: { "Content-Type": "multipart/form-data" },
     }).then((r) => r.data);
 };

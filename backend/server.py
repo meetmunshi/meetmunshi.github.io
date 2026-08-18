@@ -169,11 +169,10 @@ async def seed_from_file_if_empty():
     with open(seed_path, "rb") as f:
         content = f.read()
     persons, details = parse_excel_bytes(content)
-    await db.persons.delete_many({})
-    await db.line_details.delete_many({})
-    if persons:
+    # Only insert into collections that are empty — never delete existing data.
+    if persons_count == 0 and persons:
         await db.persons.insert_many([p.model_dump() for p in persons])
-    if details:
+    if details_count == 0 and details:
         await db.line_details.insert_many([d.model_dump() for d in details])
     logger.info(f"Seeded {len(persons)} persons and {len(details)} line details")
 
@@ -219,7 +218,14 @@ async def list_details():
 
 
 @api_router.post("/upload-excel")
-async def upload_excel(file: UploadFile = File(...)):
+async def upload_excel(file: UploadFile = File(...), confirm: bool = False):
+    """Replace the current persons + line_details roster with the contents of the uploaded Excel.
+    Requires ?confirm=true to guard against accidental data loss — the client must explicitly opt in."""
+    if not confirm:
+        raise HTTPException(
+            400,
+            "Uploading replaces the current roster. Retry with ?confirm=true to proceed.",
+        )
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(400, "Only .xlsx/.xls files supported")
     content = await file.read()
@@ -1470,26 +1476,25 @@ logger = logging.getLogger(__name__)
 
 @app.on_event("startup")
 async def on_startup():
-    # Force re-seed if row_name column not yet populated
     try:
-        any_detail = await db.line_details.find_one({}, {"_id": 0})
-        if any_detail and not any_detail.get("row_name"):
-            await db.persons.delete_many({})
-            await db.line_details.delete_many({})
-            await db.schedules.delete_many({})
-            logger.info("Old data lacked row_name; wiped for re-seed")
         await seed_from_file_if_empty()
         await _migrate_canonical_line_names()
     except Exception as e:
-        logger.exception(f"Seeding failed: {e}")
+        logger.exception(f"Startup init failed: {e}")
 
 
 async def _migrate_canonical_line_names():
-    """One-time migration: rewrite any legacy/aliased line names in existing schedules."""
+    """One-time migration: rewrite any legacy/aliased line names in existing schedules.
+    Scans the collection once; only writes to docs that actually need canonicalisation.
+    Batch-safe: uses a bounded projection query and streams via cursor."""
     master = set(await db.line_details.distinct("line"))
     if not master:
         return
-    cursor = db.schedules.find({})
+    # Only fetch fields the migration touches. Batch-limited to avoid unbounded startup cost.
+    cursor = db.schedules.find(
+        {},
+        {"_id": 1, "date": 1, "shift": 1, "line_configs": 1, "assignments": 1},
+    ).limit(5000)
     async for s in cursor:
         changed = False
         for cfg in s.get("line_configs", []):
@@ -1515,7 +1520,13 @@ async def _migrate_canonical_line_names():
                     a["line_key"] = a["line"]
                 changed = True
         if changed:
-            await db.schedules.replace_one({"_id": s["_id"]}, s)
+            await db.schedules.update_one(
+                {"_id": s["_id"]},
+                {"$set": {
+                    "line_configs": s.get("line_configs", []),
+                    "assignments": s.get("assignments", []),
+                }},
+            )
             logger.info(f"Canonicalised line names in schedule {s.get('date')} {s.get('shift')}")
 
 
