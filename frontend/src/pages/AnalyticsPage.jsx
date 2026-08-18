@@ -33,7 +33,7 @@ export default function AnalyticsPage() {
 
     const maxAbs = Math.max(1, ...(data.top_absentees || []).map((a) => a.count));
     const maxLineHit = Math.max(1, ...(data.lines_hit_by_absence || []).map((l) => l.shortage_days));
-    const maxUtil = Math.max(1, ...(data.line_utilisation || []).map((l) => l.days_run));
+    const maxUtil = Math.max(1, ...(data.line_utilisation || []).map((l) => l.total_runs || 0));
 
     return (
         <div className="p-4 sm:p-6 md:p-8">
@@ -158,13 +158,14 @@ export default function AnalyticsPage() {
                                     <div className="flex justify-between text-xs mb-1">
                                         <span className="text-zinc-200 font-semibold uppercase tracking-wide">{l.line}</span>
                                         <span className="font-mono-ibm text-emerald-400">
-                                            {l.days_run}/{data.days_with_schedule} · {l.utilisation_pct}%
+                                            {l.total_runs} run{l.total_runs === 1 ? "" : "s"}
+                                            <span className="text-zinc-500"> · {l.days_run} day{l.days_run === 1 ? "" : "s"}</span>
                                         </span>
                                     </div>
                                     <div className="h-2 bg-white/5">
                                         <div
                                             className="h-full bg-emerald-500/70"
-                                            style={{ width: `${(l.days_run / maxUtil) * 100}%` }}
+                                            style={{ width: `${(l.total_runs / maxUtil) * 100}%` }}
                                         />
                                     </div>
                                 </div>

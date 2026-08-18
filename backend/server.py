@@ -1330,24 +1330,28 @@ async def monthly_analytics(month: Optional[str] = None):
         for line, days in sorted(line_absence_days.items(), key=lambda x: (-x[1], -line_absence_shortage[x[0]]))
     ]
 
-    # --- 3) Line utilisation: days each line was scheduled (include ALL master lines)
+    # --- 3) Line utilisation: total RUN INSTANCES per line in the month
+    # (a schedule with run_count=2 on a day counts as 2 runs, not 1 day)
+    line_runs: Dict[str, int] = {line: 0 for line in master_lines}
     line_days: Dict[str, set] = {line: set() for line in master_lines}
     all_days: set = set()
     for s in docs:
         all_days.add(s["date"])
         for cfg in s.get("line_configs", []):
             line = _canonical_line(cfg["line"], master_lines)
-            if line not in line_days:
+            if line not in line_runs:
+                line_runs[line] = 0
                 line_days[line] = set()
+            line_runs[line] += int(cfg.get("run_count", 1) or 1)
             line_days[line].add(s["date"])
     days_with_schedule = len(all_days)
     line_utilisation = [
         {
             "line": line,
-            "days_run": len(dates),
-            "utilisation_pct": round((len(dates) / days_with_schedule) * 100) if days_with_schedule else 0,
+            "total_runs": line_runs[line],
+            "days_run": len(line_days[line]),
         }
-        for line, dates in sorted(line_days.items(), key=lambda x: (-len(x[1]), x[0]))
+        for line in sorted(line_runs.keys(), key=lambda k: (-line_runs[k], -len(line_days[k]), k))
     ]
 
     return {
