@@ -38,6 +38,19 @@ const DEFAULT_PRIORITY = 5;
 const SUPPORT_LINES_LOWER = new Set(["monkey", "kk", "spares", "vehicle", "crimping", "os", "5s+others"]);
 const isSupportLine = (name) => SUPPORT_LINES_LOWER.has(String(name || "").trim().toLowerCase());
 
+// Preferred display order for lines on the Setup screen (case-insensitive). Lines not
+// listed fall through in the order returned by the API.
+const LINE_ORDER = [
+    "x-smart", "x-protint", "x-smart xl", "x-smart sleek",
+    "e2", "e3", "e4",
+    "slim", "sk300", "gx300",
+    "monkey", "kk", "spares", "vehicle", "crimping", "os", "5s+others",
+];
+const lineRank = (name) => {
+    const idx = LINE_ORDER.indexOf(String(name || "").trim().toLowerCase());
+    return idx === -1 ? 9999 : idx;
+};
+
 export default function SetupPage() {
     const navigate = useNavigate();
     const [date, setDate] = useState(todayISO());
@@ -58,11 +71,19 @@ export default function SetupPage() {
         setLoading(true);
         Promise.all([fetchLines(), fetchPersons(), fetchAreas()])
             .then(([linesData, personsData, areasData]) => {
-                setLines(linesData.lines || []);
+                const orderedLines = (linesData.lines || [])
+                    .slice()
+                    .sort((a, b) => {
+                        const ra = lineRank(a.line);
+                        const rb = lineRank(b.line);
+                        if (ra !== rb) return ra - rb;
+                        return (linesData.lines || []).indexOf(a) - (linesData.lines || []).indexOf(b);
+                    });
+                setLines(orderedLines);
                 setPersons(personsData || []);
                 setAreas(areasData.areas || []);
                 const init = {};
-                (linesData.lines || []).forEach((l, idx) => {
+                orderedLines.forEach((l, idx) => {
                     const isSpares = l.line.toLowerCase() === "spares";
                     init[l.line] = {
                         enabled: true,
