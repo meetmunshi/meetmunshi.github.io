@@ -1,0 +1,24 @@
+{
+  "summary": "Per-line disabled_activities feature (line -> [row_names]) verified end-to-end. Backend: POST /api/schedule and POST /api/schedule/{date}/set-disabled-activities both honor per-line isolation — disabling 'testing' on E2 zeros the E2 testing cell (required=0, shortage=0, empty, locked) while X-Smart testing remains untouched at 2/2. Re-enabling via empty list restores required from master line_details persons_required and unlocks the cell. Legacy 'disabled_row_names' field is silently ignored (Pydantic extra=ignore). All 7 pytest cases pass. Frontend: Setup page shows 'Activities Per Line' section with per-line blocks (activities-line-E2, activities-line-X-Smart), correct counts (E2=9/9→8/9 after untick, X-Smart stays 8/8), 'Enable all' reset button appears conditionally when any activity is disabled and successfully clears. Board desktop shows cell-testing-E2-not-planned with 'Not Planned / not planned today' badge and X-Smart testing cell UNCHANGED (regular editable cell — no cell-testing-X-Smart-not-planned exists). Mobile view (390x844) mirrors: mobile-cell-testing-E2-not-planned exists inside E2 card while X-Smart card retains editable mobile-cell-testing-X-Smart. SOP step 01 references 'Activities Per Line' and step 02 titled 'Change Activities Mid-Shift' explains per-line semantics.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter18.py",
+    "/app/test_reports/pytest/pytest_iter18.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~1600+ lines — consider splitting into routers/models/services modules for maintainability.",
+    "'Enable all' reset button is conditionally rendered only when Object.keys(disabledActivities).length > 0; correct behavior, but tests must first toggle at least one activity off before the button appears (documented for future testers)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter18.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "N/A",
+  "seed_data_creation": "Reused baseline: 2026-08-19 day with X-Smart + E2 line_configs.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter18 per-line disabled_activities feature is fully working. Setup route is '/' (not '/setup'). Board takes date via URL param ?date=YYYY-MM-DD. To test disabled activity flows, either use API POST /api/schedule/{date}/set-disabled-activities with body {shift, disabled_activities: {line:[row_names]}} or use UI checkbox at data-testid='activity-checkbox-{line}-{row_name}'. Legacy 'disabled_row_names' field is deprecated; the old iter17 test file references it and should not be re-run.",
+  "rca of the issue": "N/A — no issues found."
+}
