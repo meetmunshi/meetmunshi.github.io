@@ -57,6 +57,15 @@
   - `POST /schedule/{date}/fill-shortages` no longer permanently freezes the board — it now locks only the cells whose assignments actually changed (previously every cell was added to `unassigned_keys`, disabling auto-fill after later absences). Docstring updated. Re-tested: mark-absent after fill-shortages still triggers a proper refill.
   - SOP updated (step 01 mentions Support Ops carve-out & new Select/Deselect All buttons; step 08 documents the Undo toast).
   - Verified end-to-end with testing_agent iter19 (7/7 backend + full frontend pass, no critical issues).
+- 2026-02 (v17): Consolidated duplicate line-suggestion feature + Multi-step Undo (up to 5).
+  - Removed the duplicate "What else can we run?" button from the board's Unassigned row (and the `GET /api/schedule/{date}/suggest-lines` endpoint + `_build_suggestion` helper). Kept the more capable one — the button that starts a new line from the current unassigned pool — renamed its label to **"Suggest another line to run"** (both desktop and mobile).
+  - `Schedule.previous_state: Optional[dict]` replaced with `history: List[dict]` bounded to the last 5 entries via MongoDB `$push $slice:-5`. Constant `MAX_HISTORY = 5`.
+  - New `_undoable_snapshot(sched_doc, action)` helper captures line_configs, absent_person_ids, overrides, unassigned_keys, required_overrides, assignments, closures, closed_line_keys, disabled_activities, totals, plus the human-readable action label and timestamp.
+  - Every mutating endpoint (adjust, fill-shortages non-preview, late-arrival mutation path, mark-absent, set-disabled-activities, close-line, reopen-line, start-line) now snapshots the pre-mutation schedule and pushes it to `history`.
+  - `POST /api/schedule/{date}/undo` rewritten from a single-shot late-arrival undo into a generic pop-last-snapshot restore that fully replaces line_configs/absent/overrides/unassigned_keys/required_overrides/assignments/closures/closed_line_keys/disabled_activities/totals in one write. 400 when the stack is empty.
+  - `generate_schedule` (used internally by adjust/late-arrival etc.) now preserves `history`, `closures`, `closed_line_keys`, `logged_at` from the existing doc, fixing a latent bug where `/adjust` was wiping closures + disabled_activities.
+  - Board's Undo button now shows the stack depth as an inline badge (`UNDO 3`), disables when the stack is empty, and its Sonner toast prints the popped action (`Undone: Mark absent · Aarsh Patel`). SOP + glossary updated.
+  - Verified end-to-end with testing_agent iter20 (8/8 backend + full frontend pass, no critical issues).
 
 ## Testing
 - Iteration 2 test report: 100% backend + frontend pass, all 18 scenarios (including priority ordering proof, run duplication with no overlap, adjust set/clear behavior, shift isolation, export filename).

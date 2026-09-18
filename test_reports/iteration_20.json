@@ -1,0 +1,24 @@
+{
+  "summary": "Iter20 fully verified. BACKEND (8/8 pytest passing): (a) GET /api/schedule/{date}/suggest-lines (plural) is removed → returns 404 as required; singular /suggest-line still returns 200. (b) Multi-step undo stack: history starts at 0 after fresh generate; after 5 different mutations (mark-absent, fill-shortages, set-disabled-activities on non-support line E2, close-line, adjust) history grows to 5 with correct shape (action, snapshot_at, line_configs, absent_person_ids, overrides, unassigned_keys, required_overrides, assignments, closures, closed_line_keys, disabled_activities). (c) After 7 mutations history caps at exactly 5 via $push $slice:-5. (d) POST /undo pops most recent snapshot: after fill+adjust+close-line, one undo removes close-line (closed_line_keys no longer contains X-Smart) and history length drops by 1; draining to 0 then next undo returns 400 'Nothing to undo'. (e) close-line + adjust preserves closed_line_keys (previously wiped by /adjust). (f) set-disabled-activities value preserved across subsequent adjust. (g) mark-absent + undo restores absent_person_ids. Also confirmed: generate_schedule (POST /api/schedule) now preserves history/closures — test suite had to explicitly DELETE the schedule between tests. FRONTEND: suggest-lines-btn ('What else can we run?') fully removed from DOM. suggest-start-line-btn present with new label 'Suggest another line to run', clicking opens a dialog. Undo button initially disabled with no badge, after 3 mutations shows badge '3', clicking triggers Sonner toast 'Undone: Mark absent · Hetal Vankar', decrements 3→2→1→0, then disables again. Mobile 400x800: mobile-suggest-start-line-btn visible in Unassigned card; undo-btn also visible in header.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter20.py",
+    "/app/test_reports/pytest/pytest_iter20.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py has grown to ~2004 lines and every mutating endpoint duplicates the snapshot+$push $slice:-5 pattern. Consider extracting a `history_service.record(date, shift, sched_doc, action)` helper to DRY the 8 call sites (adjust, fill-shortages, late-arrival, mark-absent, set-disabled-activities, close-line, reopen-line, start-line).",
+    "The undo endpoint restores the full snapshot but does NOT re-derive totals from the assignments (it just restores the persisted totals). If a future migration ever adds new schedule fields (e.g. metadata), older snapshots taken before the migration will leave those new fields untouched on restore. Consider defensively re-running _recompute_totals(sched) at the end of undo.",
+    "MAX_HISTORY = 5 is a magic number — could be lifted to env/config so ops can tune.",
+    "BoardPage.jsx is now ~2033 lines and continues to be a monolith; the Undo header, Unassigned row, Suggestions dialog, and cell edit modals could be split into sibling components."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter20.py"],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100%"},
+  "test_credentials": "N/A",
+  "seed_data_creation": "Test schedules for 2026-10-15 (pytest) and 2026-10-16 (playwright) — both DELETEd during teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter20 removes /api/schedule/{date}/suggest-lines (plural). Do NOT try to call it. Singular /suggest-line remains. Undo endpoint is POST /api/schedule/{date}/undo?shift=day, pops last of Schedule.history (bounded to 5 via $push $slice:-5). generate_schedule (POST /api/schedule) now PRESERVES history, closures, closed_line_keys, logged_at from existing doc — so tests must DELETE the schedule first if a clean baseline is needed. Frontend: 'undo-count' testid on badge, 'suggest-start-line-btn' (desktop) + 'mobile-suggest-start-line-btn' (mobile card view).",
+  "rca of the issue": "N/A — no issues found."
+}
