@@ -440,6 +440,15 @@ LINE_ALIASES_LOWER: Dict[str, str] = {
     "element2": "E2",
 }
 
+# Support Ops lines are treated specially throughout the app:
+# they always appear fully planned on the board and are excluded from
+# per-line activity selection. Match by case-insensitive base name.
+SUPPORT_LINES_LOWER: set = {"monkey", "kk", "spares", "vehicle", "crimping", "os", "5s+others"}
+
+
+def _is_support_line(name: str) -> bool:
+    return isinstance(name, str) and name.strip().lower() in SUPPORT_LINES_LOWER
+
 
 def _canonical_line(name: str, master_lines: set) -> str:
     """Return the canonical line name from the master list, resolving aliases and casing."""
@@ -721,11 +730,14 @@ async def suggest_lines(date: str, shift: str = "day"):
 
 @api_router.post("/schedule/{date}/fill-shortages")
 async def fill_shortages(date: str, shift: str = "day", preview: bool = False):
-    """Auto-assign best available skilled candidates to every shortage cell.
-    Iterates through 3 passes (FREE pool → BORROW from excess → SWAP chain), then loops
-    the whole thing until no more shortages can be filled (fixed point).
+    """Optimally fill every shortage using max bipartite matching (Kuhn's).
 
-    When preview=true, returns a diff of proposed changes WITHOUT persisting.
+    Seeds the matching with existing assignments so already-placed associates
+    only move when necessary to enable another seat. When preview=true, returns
+    a diff of proposed changes without persisting. Only cells whose assignments
+    actually change are locked (unassigned_keys / overrides) — untouched cells
+    keep flowing through auto-fill on later absentee changes, so the board
+    never permanently freezes.
     """
     sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
     if not sched_doc:
@@ -760,9 +772,16 @@ async def fill_shortages(date: str, shift: str = "day", preview: bool = False):
     initial_match = {ci: list(a["assigned_person_ids"]) for ci, a in enumerate(assignments)}
     optimal = _max_bipartite_matching(cells_input, persons, absent_set, skill_totals, initial=initial_match)
     for ci, a in enumerate(assignments):
-        a["assigned_person_ids"] = optimal.get(ci, [])
-        overrides[cell_key(a)] = a["assigned_person_ids"]
-        unassigned.add(cell_key(a))
+        new_ids = optimal.get(ci, [])
+        old_ids = list(a["assigned_person_ids"])
+        a["assigned_person_ids"] = new_ids
+        # Only lock the cell if the assignments actually changed. Otherwise leave the
+        # existing overrides/unassigned state alone so subsequent auto-fills stay
+        # unblocked (else the board freezes: every cell would be marked "unassigned"
+        # forever, defeating auto-optimisation after later absences).
+        if set(new_ids) != set(old_ids):
+            overrides[cell_key(a)] = new_ids
+            unassigned.add(cell_key(a))
 
     if preview:
         # Build diff without persisting
@@ -1188,7 +1207,12 @@ async def set_disabled_activities(date: str, req: SetDisabledActivitiesRequest):
     req_per_detail = {(d["line"], d["detail"]): int(d.get("persons_required", 0)) for d in details}
 
     def _norm(d: Dict[str, List[str]]) -> Dict[str, set]:
-        return {ln: set(rows or []) for ln, rows in (d or {}).items() if rows}
+        # Silently drop any Support Ops line — those lines can't have activities disabled.
+        return {
+            ln: set(rows or [])
+            for ln, rows in (d or {}).items()
+            if rows and not _is_support_line(ln)
+        }
 
     current = _norm(sched.get("disabled_activities") or {})
     new_map = _norm(req.disabled_activities)
@@ -1289,6 +1313,20 @@ async def close_line(date: str, req: CloseLineRequest):
 
     freed_count = 0
     line_base = req.line_key.split(" #")[0]
+    # Snapshot BEFORE clearing so reopen can restore associates back to their exact cells.
+    pre_close_snapshot = [
+        {
+            "row_name": a["row_name"],
+            "line": a["line"],
+            "run": a.get("run", 1),
+            "line_key": a["line_key"],
+            "detail": a["detail"],
+            "required": a["required"],
+            "assigned_person_ids": list(a["assigned_person_ids"]),
+            "assigned_person_names": list(a["assigned_person_names"]),
+        }
+        for a in line_cells
+    ]
     for a in line_cells:
         freed_count += len(a["assigned_person_ids"])
         a["assigned_person_ids"] = []
@@ -1302,6 +1340,7 @@ async def close_line(date: str, req: CloseLineRequest):
         "line": line_base,
         "closed_at": now,
         "freed_count": freed_count,
+        "snapshot": pre_close_snapshot,
     }
     closures = list(sched.get("closures") or [])
     closures.append(closure)
@@ -1330,6 +1369,100 @@ async def close_line(date: str, req: CloseLineRequest):
             "total_shortage": total_shortage,
             "total_assigned": total_assigned,
             "total_required": total_required,
+        }},
+    )
+    return await _get_schedule_doc(date, req.shift)
+
+
+class ReopenLineRequest(BaseModel):
+    shift: str = "day"
+    line_key: str
+
+
+@api_router.post("/schedule/{date}/reopen-line", response_model=Schedule)
+async def reopen_line(date: str, req: ReopenLineRequest):
+    """Undo a mid-day line closure: restore the line's cells + assignments from the
+    closure snapshot, remove the closure entry, and unlock the cells so the board
+    resumes optimising normally. Associates who got reassigned in the meantime
+    aren't double-booked — the snapshot only wins for people still free."""
+    sched = await db.schedules.find_one({"date": date, "shift": req.shift}, {"_id": 0})
+    if not sched:
+        raise HTTPException(404, "Schedule not found")
+    closures = list(sched.get("closures") or [])
+    closed_keys = list(sched.get("closed_line_keys") or [])
+    if req.line_key not in closed_keys:
+        raise HTTPException(400, f"Line '{req.line_key}' is not closed")
+
+    # Find the most recent closure for this line_key
+    closure = None
+    closure_idx = -1
+    for i in range(len(closures) - 1, -1, -1):
+        if closures[i].get("line_key") == req.line_key:
+            closure = closures[i]
+            closure_idx = i
+            break
+    if not closure:
+        raise HTTPException(404, "Closure record not found for this line")
+
+    snapshot = closure.get("snapshot") or []
+    if not snapshot:
+        # Legacy closure without snapshot — just reopen the shell, associates go to pool
+        pass
+
+    # Anyone already reassigned to a non-closed cell after closure keeps that spot.
+    still_assigned: set = set()
+    for a in sched.get("assignments", []):
+        if a["line_key"] == req.line_key:
+            continue
+        for pid in a.get("assigned_person_ids", []):
+            still_assigned.add(pid)
+
+    persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
+    p_by_id = {p["id"]: p for p in persons}
+
+    overrides = dict(sched.get("overrides") or {})
+    unassigned_keys = set(sched.get("unassigned_keys") or [])
+
+    # Restore each cell of the reopened line from the snapshot
+    snap_by_key = {
+        f"{s['row_name']}||{s['line_key']}||{s['detail']}": s for s in snapshot
+    }
+    for a in sched.get("assignments", []):
+        if a["line_key"] != req.line_key:
+            continue
+        cell_key = f"{a['row_name']}||{a['line_key']}||{a['detail']}"
+        snap = snap_by_key.get(cell_key)
+        if snap:
+            restored_ids = [pid for pid in snap["assigned_person_ids"] if pid not in still_assigned]
+            a["required"] = int(snap.get("required", 0))
+            a["assigned_person_ids"] = restored_ids
+            a["assigned_person_names"] = [
+                _person_full_name(p_by_id[pid]) for pid in restored_ids if pid in p_by_id
+            ]
+            a["shortage"] = max(0, a["required"] - len(restored_ids))
+            # Unlock cell so auto-fill can top it up if needed
+            unassigned_keys.discard(cell_key)
+            overrides.pop(cell_key, None)
+
+    # Drop the closure entry + closed_line_keys marker
+    closures.pop(closure_idx)
+    closed_keys = [k for k in closed_keys if k != req.line_key]
+
+    total_required = sum(a.get("required", 0) for a in sched["assignments"])
+    total_assigned = sum(len(a.get("assigned_person_ids", [])) for a in sched["assignments"])
+    total_shortage = sum(a.get("shortage", 0) for a in sched["assignments"])
+
+    await db.schedules.update_one(
+        {"date": date, "shift": req.shift},
+        {"$set": {
+            "assignments": sched["assignments"],
+            "closures": closures,
+            "closed_line_keys": closed_keys,
+            "overrides": overrides,
+            "unassigned_keys": list(unassigned_keys),
+            "total_required": total_required,
+            "total_assigned": total_assigned,
+            "total_shortage": total_shortage,
         }},
     )
     return await _get_schedule_doc(date, req.shift)

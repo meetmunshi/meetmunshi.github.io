@@ -33,6 +33,10 @@ import {
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const DEFAULT_PRIORITY = 5;
+// Support Ops lines are always fully planned — per-line activity selection
+// doesn't apply to them.
+const SUPPORT_LINES_LOWER = new Set(["monkey", "kk", "spares", "vehicle", "crimping", "os", "5s+others"]);
+const isSupportLine = (name) => SUPPORT_LINES_LOWER.has(String(name || "").trim().toLowerCase());
 
 export default function SetupPage() {
     const navigate = useNavigate();
@@ -161,6 +165,35 @@ export default function SetupPage() {
             }
         }
         setDisabledActivities({});
+    };
+
+    const setLineActivities = async (line, mode) => {
+        // mode: 'select-all' -> clear that line's disabled list; 'deselect-all' -> disable every row for the line
+        const lineData = lines.find((l) => l.line === line);
+        if (!lineData) return;
+        const rowNames = Array.from(new Set(lineData.details.map((d) => d.row_name).filter(Boolean)));
+        const next = { ...disabledActivities };
+        if (mode === "select-all") {
+            delete next[line];
+        } else {
+            next[line] = rowNames.slice().sort();
+        }
+        const prev = disabledActivities;
+        setDisabledActivities(next);
+        if (scheduleExists) {
+            setApplyingAreas(true);
+            try {
+                await apiSetDisabledActivities(date, { shift, disabled_activities: next });
+                toast.success(mode === "select-all"
+                    ? `${line} · all activities re-enabled`
+                    : `${line} · all activities deselected`);
+            } catch (e) {
+                toast.error(e.response?.data?.detail || e.message);
+                setDisabledActivities(prev);
+            } finally {
+                setApplyingAreas(false);
+            }
+        }
     };
 
     const handleGenerate = async () => {
@@ -375,6 +408,7 @@ export default function SetupPage() {
                             <div className="px-4 py-2 border-b border-white/10 flex flex-wrap items-center justify-between gap-2">
                                 <div className="text-[10px] uppercase tracking-widest text-zinc-500">
                                     Untick any activity for a specific line · applies {scheduleExists ? "immediately" : "on generate"}
+                                    <span className="ml-2 text-zinc-600">· Support Ops always fully planned</span>
                                 </div>
                                 {Object.keys(disabledActivities).length > 0 && (
                                     <button
@@ -388,19 +422,43 @@ export default function SetupPage() {
                                 )}
                             </div>
                             <div className="divide-y divide-white/5">
-                                {activeLines.map(([line]) => {
+                                {activeLines
+                                    .filter(([line]) => !isSupportLine(line))
+                                    .map(([line]) => {
                                     const lineData = lines.find((l) => l.line === line);
                                     if (!lineData) return null;
                                     const rowNames = Array.from(new Set(lineData.details.map((d) => d.row_name).filter(Boolean))).sort();
                                     if (rowNames.length === 0) return null;
                                     const disabled = new Set(disabledActivities[line] || []);
+                                    const allDeselected = disabled.size === rowNames.length && rowNames.length > 0;
+                                    const allSelected = disabled.size === 0;
                                     return (
                                         <div key={line} className="p-3" data-testid={`activities-line-${line}`}>
-                                            <div className="flex items-center justify-between mb-2">
+                                            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                                                 <div className="font-chivo font-bold uppercase tracking-tight text-sm text-white">{line}</div>
-                                                <span className="text-[10px] uppercase tracking-widest text-zinc-500" data-testid={`activities-count-${line}`}>
-                                                    {rowNames.length - disabled.size}/{rowNames.length} on
-                                                </span>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-[10px] uppercase tracking-widest text-zinc-500" data-testid={`activities-count-${line}`}>
+                                                        {rowNames.length - disabled.size}/{rowNames.length} on
+                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setLineActivities(line, "select-all")}
+                                                        disabled={applyingAreas || allSelected}
+                                                        data-testid={`activities-select-all-${line}`}
+                                                        className="text-[10px] uppercase tracking-widest text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 disabled:opacity-30 disabled:cursor-not-allowed"
+                                                    >
+                                                        Select all
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setLineActivities(line, "deselect-all")}
+                                                        disabled={applyingAreas || allDeselected}
+                                                        data-testid={`activities-deselect-all-${line}`}
+                                                        className="text-[10px] uppercase tracking-widest text-red-300 border border-red-500/30 bg-red-500/10 px-2 py-1 disabled:opacity-30 disabled:cursor-not-allowed"
+                                                    >
+                                                        Deselect all
+                                                    </button>
+                                                </div>
                                             </div>
                                             <div className="grid grid-cols-2 md:grid-cols-3 gap-1">
                                                 {rowNames.map((rn) => {
@@ -428,8 +486,8 @@ export default function SetupPage() {
                                         </div>
                                     );
                                 })}
-                                {activeLines.length === 0 && (
-                                    <div className="p-4 text-xs italic text-zinc-500">Enable at least one line above to configure activities.</div>
+                                {activeLines.filter(([line]) => !isSupportLine(line)).length === 0 && (
+                                    <div className="p-4 text-xs italic text-zinc-500">Enable at least one non-Support Ops line above to configure activities.</div>
                                 )}
                             </div>
                         </div>

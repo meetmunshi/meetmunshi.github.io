@@ -15,7 +15,8 @@ const steps = [
             "Open Setup from the left menu.",
             "Pick today's date and shift.",
             "Tick the assembly lines that will run today. Set Priority (1 = highest, gets people first) and Runs (how many times a line runs today).",
-            "In 'Activities Per Line', each enabled line shows its own set of activities. All are ticked by default. Untick any single activity for a specific line (e.g. run only Testing for E2 while X-Smart runs everything) — only that line's cell becomes 'not planned today', other lines stay untouched.",
+            "In 'Activities Per Line', each enabled non-Support Ops line shows its own set of activities. All are ticked by default. Untick any single activity for a specific line (e.g. run only Testing for E2 while X-Smart runs everything) — only that line's cell becomes 'not planned today', other lines stay untouched. Use the per-line 'Select all' / 'Deselect all' buttons to flip an entire line in one click.",
+            "Support Ops lines (Monkey, KK, Spares, Vehicle, Crimping, OS, 5S+Others) are always fully planned — they don't appear in the activities selector.",
             "In 'Mark Absent', tick everyone who is not coming in today.",
         ],
     },
@@ -88,6 +89,7 @@ const steps = [
         body: [
             "Hover any line column on the Board (or tap the power icon on the mobile card) and confirm to close that line for the rest of the shift.",
             "All associates on that line move to the Unassigned pool. No other line is touched. The board removes the closed column entirely so you always see only what's running now.",
+            "Closed by mistake? A toast with an 'Undo' button appears for ~10 seconds — click it to reopen the line and restore every associate back to their original cell (anyone reassigned in the meantime keeps their new spot).",
             "The closure is stamped with a timestamp and appears in Analytics ('Line Closures This Month') and as a ⏻ badge on the History calendar.",
         ],
     },
@@ -161,7 +163,7 @@ const glossary = [
     { term: "Run count", def: "If a line runs 2× today, a second column '<line> #2' is created. Analytics counts total runs per line for the month." },
     { term: "Log", def: "Freezes the schedule and marks the day as recorded (shows in History and Absenteeism reports)." },
     { term: "Delete record", def: "In History, tap the trash icon on any day/shift to remove that record. Logged schedules require an extra confirmation." },
-    { term: "Close a line", def: "Ends a running line mid-shift. Every associate on it moves to the Unassigned pool; the column disappears from the board and the closure is stamped with a time in Analytics & History." },
+    { term: "Close a line", def: "Ends a running line mid-shift. Every associate on it moves to the Unassigned pool; the column disappears from the board. A 10-second Undo toast lets you reopen the line with associates restored to their original cells. Closure is stamped with a time in Analytics & History." },
     { term: "Suggest best line to run", def: "Ranks every idle master line by how many unassigned associates can fill it. Start the top choice to auto-fill it from the free pool in one click." },
 ];
 

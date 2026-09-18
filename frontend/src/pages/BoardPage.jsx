@@ -17,6 +17,7 @@ import {
     lateArrival,
     undoLateArrival,
     closeLine,
+    reopenLine,
     suggestLineToStart,
     startLine,
 } from "@/lib/api";
@@ -421,11 +422,28 @@ export default function BoardPage() {
         }
     };
 
+    const handleReopenLine = async (lineKey) => {
+        try {
+            await reopenLine(date, { shift, line_key: lineKey });
+            toast.success(`${lineKey} reopened · associates restored`);
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || e.message);
+        }
+    };
+
     const handleCloseLine = async (lineKey) => {
         if (!window.confirm(`Close the ${lineKey} line?\nAll associates currently on this line will move to the Unassigned pool. Other lines are not touched. This action is logged.`)) return;
         try {
             const r = await closeLine(date, { shift, line_key: lineKey });
-            toast.success(`${lineKey} closed · ${r.closures?.[r.closures.length - 1]?.freed_count || 0} associates freed`);
+            const freed = r.closures?.[r.closures.length - 1]?.freed_count || 0;
+            toast.success(`${lineKey} closed · ${freed} associates freed`, {
+                duration: 10000,
+                action: {
+                    label: "Undo",
+                    onClick: () => handleReopenLine(lineKey),
+                },
+            });
             load();
         } catch (e) {
             toast.error(e.response?.data?.detail || e.message);
