@@ -7,7 +7,7 @@ import {
     fetchSchedule,
     fetchAreas,
     generateSchedule,
-    setDisabledAreas as apiSetDisabledAreas,
+    setDisabledActivities as apiSetDisabledActivities,
     autoPlan,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,7 @@ export default function SetupPage() {
     const [configs, setConfigs] = useState({}); // line -> {enabled, priority, run_count}
     const [absentIds, setAbsentIds] = useState(new Set());
     const [areas, setAreas] = useState([]);
-    const [disabledAreas, setDisabledAreas] = useState(new Set());
+    const [disabledActivities, setDisabledActivities] = useState({}); // {[line]: string[] of row_names}
     const [scheduleExists, setScheduleExists] = useState(false);
     const [applyingAreas, setApplyingAreas] = useState(false);
     const [search, setSearch] = useState("");
@@ -92,12 +92,12 @@ export default function SetupPage() {
                     return next;
                 });
                 setAbsentIds(new Set(sched.absent_person_ids || []));
-                setDisabledAreas(new Set(sched.disabled_row_names || []));
+                setDisabledActivities(sched.disabled_activities || {});
             } else {
                 setScheduleExists(false);
                 // Fresh date — reset absentees so yesterday's list doesn't carry over
                 setAbsentIds(new Set());
-                setDisabledAreas(new Set());
+                setDisabledActivities({});
             }
         });
     }, [date, shift]);
@@ -125,24 +125,42 @@ export default function SetupPage() {
 
     const availableCount = persons.length - absentIds.size;
 
-    const toggleArea = async (area) => {
-        const next = new Set(disabledAreas);
-        if (next.has(area)) next.delete(area); else next.add(area);
-        setDisabledAreas(next);
-        // If a schedule already exists for this date, apply the change immediately mid-day
+    const toggleActivity = async (line, rowName) => {
+        const next = { ...disabledActivities };
+        const cur = new Set(next[line] || []);
+        if (cur.has(rowName)) cur.delete(rowName); else cur.add(rowName);
+        if (cur.size === 0) delete next[line]; else next[line] = Array.from(cur).sort();
+        setDisabledActivities(next);
         if (scheduleExists) {
             setApplyingAreas(true);
             try {
-                await apiSetDisabledAreas(date, { shift, disabled_row_names: Array.from(next) });
-                toast.success(next.has(area) ? `${area.toUpperCase()} deselected — cells freed` : `${area.toUpperCase()} re-enabled`);
+                await apiSetDisabledActivities(date, { shift, disabled_activities: next });
+                toast.success(cur.has(rowName)
+                    ? `${line} · ${rowName.toUpperCase()} deselected`
+                    : `${line} · ${rowName.toUpperCase()} re-enabled`);
             } catch (e) {
                 toast.error(e.response?.data?.detail || e.message);
-                // Revert
-                setDisabledAreas(disabledAreas);
+                setDisabledActivities(disabledActivities);
             } finally {
                 setApplyingAreas(false);
             }
         }
+    };
+
+    const resetAllActivities = async () => {
+        if (scheduleExists) {
+            setApplyingAreas(true);
+            try {
+                await apiSetDisabledActivities(date, { shift, disabled_activities: {} });
+                toast.success("All activities re-enabled");
+            } catch (e) {
+                toast.error(e.response?.data?.detail || e.message);
+                return;
+            } finally {
+                setApplyingAreas(false);
+            }
+        }
+        setDisabledActivities({});
     };
 
     const handleGenerate = async () => {
@@ -164,7 +182,7 @@ export default function SetupPage() {
                 absent_person_ids: Array.from(absentIds),
                 overrides: {},
                 unassigned_keys: [],
-                disabled_row_names: Array.from(disabledAreas),
+                disabled_activities: disabledActivities,
             });
             toast.success("Schedule generated");
             navigate(`/board?date=${date}&shift=${shift}`);
@@ -352,64 +370,67 @@ export default function SetupPage() {
                     </div>
 
                     <div className="mt-6">
-                        <SectionTitle index="C" title="Areas To Run" />
-                        <div className="border border-white/10 bg-[#111]" data-testid="areas-section">
+                        <SectionTitle index="C" title="Activities Per Line" />
+                        <div className="border border-white/10 bg-[#111]" data-testid="activities-section">
                             <div className="px-4 py-2 border-b border-white/10 flex flex-wrap items-center justify-between gap-2">
-                                <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-                                    Deselect any area · applies {scheduleExists ? "immediately" : "on generate"}
+                                <div className="text-[10px] uppercase tracking-widest text-zinc-500">
+                                    Untick any activity for a specific line · applies {scheduleExists ? "immediately" : "on generate"}
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-[10px] uppercase tracking-widest text-zinc-400" data-testid="areas-count">
-                                        {areas.length - disabledAreas.size}/{areas.length} on
-                                    </span>
-                                    {disabledAreas.size > 0 && (
-                                        <button
-                                            type="button"
-                                            onClick={async () => {
-                                                if (scheduleExists) {
-                                                    setApplyingAreas(true);
-                                                    try {
-                                                        await apiSetDisabledAreas(date, { shift, disabled_row_names: [] });
-                                                        toast.success("All areas re-enabled");
-                                                    } catch (e) {
-                                                        toast.error(e.response?.data?.detail || e.message);
-                                                        return;
-                                                    } finally {
-                                                        setApplyingAreas(false);
-                                                    }
-                                                }
-                                                setDisabledAreas(new Set());
-                                            }}
-                                            data-testid="areas-reset-all"
-                                            className="text-[10px] uppercase tracking-widest text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 px-2 py-1"
-                                        >
-                                            Enable all
-                                        </button>
-                                    )}
-                                </div>
+                                {Object.keys(disabledActivities).length > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={resetAllActivities}
+                                        data-testid="activities-reset-all"
+                                        className="text-[10px] uppercase tracking-widest text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 px-2 py-1"
+                                    >
+                                        Enable all
+                                    </button>
+                                )}
                             </div>
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-px bg-white/5">
-                                {areas.map((a) => {
-                                    const enabled = !disabledAreas.has(a);
+                            <div className="divide-y divide-white/5">
+                                {activeLines.map(([line]) => {
+                                    const lineData = lines.find((l) => l.line === line);
+                                    if (!lineData) return null;
+                                    const rowNames = Array.from(new Set(lineData.details.map((d) => d.row_name).filter(Boolean))).sort();
+                                    if (rowNames.length === 0) return null;
+                                    const disabled = new Set(disabledActivities[line] || []);
                                     return (
-                                        <label
-                                            key={a}
-                                            className={`flex items-center gap-2 px-3 py-2 cursor-pointer bg-[#0f0f0f] ${
-                                                enabled ? "text-white" : "text-zinc-500"
-                                            } ${applyingAreas ? "opacity-60" : ""}`}
-                                            data-testid={`area-row-${a}`}
-                                        >
-                                            <Checkbox
-                                                checked={enabled}
-                                                onCheckedChange={() => toggleArea(a)}
-                                                disabled={applyingAreas}
-                                                data-testid={`area-checkbox-${a}`}
-                                                className="border-white/20 data-[state=checked]:bg-[#3B6AB8] data-[state=checked]:border-[#3B6AB8] rounded-none"
-                                            />
-                                            <span className={`text-sm font-semibold uppercase tracking-wide ${enabled ? "" : "line-through"}`}>{a}</span>
-                                        </label>
+                                        <div key={line} className="p-3" data-testid={`activities-line-${line}`}>
+                                            <div className="flex items-center justify-between mb-2">
+                                                <div className="font-chivo font-bold uppercase tracking-tight text-sm text-white">{line}</div>
+                                                <span className="text-[10px] uppercase tracking-widest text-zinc-500" data-testid={`activities-count-${line}`}>
+                                                    {rowNames.length - disabled.size}/{rowNames.length} on
+                                                </span>
+                                            </div>
+                                            <div className="grid grid-cols-2 md:grid-cols-3 gap-1">
+                                                {rowNames.map((rn) => {
+                                                    const enabled = !disabled.has(rn);
+                                                    return (
+                                                        <label
+                                                            key={rn}
+                                                            className={`flex items-center gap-2 px-2 py-1.5 border border-white/5 bg-[#0f0f0f] cursor-pointer text-xs ${
+                                                                enabled ? "text-white" : "text-zinc-500"
+                                                            } ${applyingAreas ? "opacity-60" : ""}`}
+                                                            data-testid={`activity-row-${line}-${rn}`}
+                                                        >
+                                                            <Checkbox
+                                                                checked={enabled}
+                                                                onCheckedChange={() => toggleActivity(line, rn)}
+                                                                disabled={applyingAreas}
+                                                                data-testid={`activity-checkbox-${line}-${rn}`}
+                                                                className="border-white/20 data-[state=checked]:bg-[#3B6AB8] data-[state=checked]:border-[#3B6AB8] rounded-none"
+                                                            />
+                                                            <span className={`uppercase tracking-wide ${enabled ? "" : "line-through"}`}>{rn}</span>
+                                                        </label>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
                                     );
                                 })}
+                                {activeLines.length === 0 && (
+                                    <div className="p-4 text-xs italic text-zinc-500">Enable at least one line above to configure activities.</div>
+                                )}
                             </div>
                         </div>
                     </div>

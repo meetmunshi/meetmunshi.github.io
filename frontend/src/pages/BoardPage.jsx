@@ -333,8 +333,17 @@ export default function BoardPage() {
 
     // Closed line keys (from schedule doc, updated on load)
     const closedKeys = useMemo(() => new Set(schedule?.closed_line_keys || []), [schedule]);
-    // Deselected areas (rows the manager toggled off in Setup)
-    const disabledRows = useMemo(() => new Set(schedule?.disabled_row_names || []), [schedule]);
+    // Per-line disabled activities (line -> Set of row_names)
+    const disabledActivitiesByLine = useMemo(() => {
+        const m = {};
+        Object.entries(schedule?.disabled_activities || {}).forEach(([line, rows]) => {
+            m[line] = new Set(rows || []);
+        });
+        return m;
+    }, [schedule]);
+    // Helper: is (line, row_name) disabled?
+    const isActivityDisabled = (line, rowName) =>
+        (disabledActivitiesByLine[line] || new Set()).has(rowName);
 
     if (loading) return <div className="p-12 text-zinc-500">Loading…</div>;
     if (!schedule) {
@@ -786,33 +795,30 @@ export default function BoardPage() {
                     </thead>
                     <tbody>
                         {rowNames.map((rn, rIdx) => {
-                            const rowDisabled = disabledRows.has(rn);
                             return (
-                            <tr key={rn} className={rowDisabled ? "opacity-60" : ""}>
+                            <tr key={rn}>
                                 <th
                                     className="sticky left-0 bg-[#0a0a0a] z-10 grid-cell px-4 py-3 text-left text-sm font-bold text-zinc-100 uppercase tracking-wide"
                                     data-testid={`row-header-${rn}`}
                                 >
                                     <div className="flex items-center gap-2">
                                         <span>{rn.toUpperCase()}</span>
-                                        {rowDisabled && (
-                                            <span
-                                                className="text-[9px] uppercase tracking-widest font-bold text-zinc-400 border border-white/15 bg-white/5 px-1.5 py-0.5"
-                                                data-testid={`row-disabled-badge-${rn}`}
-                                            >
-                                                Not Planned
-                                            </span>
-                                        )}
                                     </div>
                                 </th>
                                 {colKeys.map((k) => {
-                                    if (rowDisabled) {
+                                    // Determine per-cell disabled state: line for this column is base name of k
+                                    const baseLine = k.split(" #")[0];
+                                    const cellDisabled = isActivityDisabled(baseLine, rn);
+                                    if (cellDisabled) {
                                         return (
                                             <td
                                                 key={k}
-                                                className="grid-cell px-3 py-2 align-top bg-[#0a0a0a]/50"
+                                                className="grid-cell px-3 py-2 align-top bg-[#0a0a0a]/50 opacity-60"
                                                 data-testid={`cell-${rn}-${k}-not-planned`}
                                             >
+                                                <div className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-zinc-500 font-bold mb-0.5">
+                                                    <span className="border border-white/15 bg-white/5 px-1 py-0.5">Not Planned</span>
+                                                </div>
                                                 <span className="text-zinc-500 text-xs italic">not planned today</span>
                                             </td>
                                         );
@@ -1126,8 +1132,9 @@ export default function BoardPage() {
                                 {cellsInCol.map(({ rn, items, ids, names, required, shortage, detailMatch }) => {
                                     const hasMatchedPerson = ids.some((id) => matchedIds && matchedIds.has(id));
                                     const cellDim = filterActive && (!detailMatch || (filters.q.trim() && !hasMatchedPerson));
-                                    const rowDisabled = disabledRows.has(rn);
-                                    if (rowDisabled) {
+                                    const baseLine = k.split(" #")[0];
+                                    const cellDisabled = isActivityDisabled(baseLine, rn);
+                                    if (cellDisabled) {
                                         return (
                                             <div
                                                 key={rn}

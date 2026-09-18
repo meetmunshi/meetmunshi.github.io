@@ -36,8 +36,8 @@ export const previewFillShortages = (date, shift = "day") =>
 export const suggestLines = (date, shift = "day") =>
     api.get(`/schedule/${date}/suggest-lines`, { params: { shift } }).then((r) => r.data);
 export const fetchAreas = () => api.get("/areas").then((r) => r.data);
-export const setDisabledAreas = (date, payload) =>
-    api.post(`/schedule/${date}/set-disabled-areas`, payload).then((r) => r.data);
+export const setDisabledActivities = (date, payload) =>
+    api.post(`/schedule/${date}/set-disabled-activities`, payload).then((r) => r.data);
 export const closeLine = (date, payload) =>
     api.post(`/schedule/${date}/close-line`, payload).then((r) => r.data);
 export const suggestLineToStart = (date, shift = "day") =>

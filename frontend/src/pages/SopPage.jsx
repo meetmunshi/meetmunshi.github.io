@@ -15,18 +15,18 @@ const steps = [
             "Open Setup from the left menu.",
             "Pick today's date and shift.",
             "Tick the assembly lines that will run today. Set Priority (1 = highest, gets people first) and Runs (how many times a line runs today).",
-            "In 'Areas to Run', all areas are ticked by default. Untick any area you're not running today (e.g. no Frame or no Pre-Packing) — deselected areas stay visible on the board as 'not planned today' but hold no seats.",
+            "In 'Activities Per Line', each enabled line shows its own set of activities. All are ticked by default. Untick any single activity for a specific line (e.g. run only Testing for E2 while X-Smart runs everything) — only that line's cell becomes 'not planned today', other lines stay untouched.",
             "In 'Mark Absent', tick everyone who is not coming in today.",
         ],
     },
     {
         n: "02",
-        title: "Change Areas Mid-Shift",
+        title: "Change Activities Mid-Shift",
         icon: LayoutGrid,
         body: [
-            "You can flip an area on or off at any point during the day from the same Setup screen — no need to regenerate the schedule.",
-            "Turn an area OFF: every associate in those cells is freed to the Unassigned pool. The board keeps the row visible but marks it 'not planned today'.",
-            "Turn an area BACK ON: cells become active again (empty). Place freed associates using the normal click-to-edit adjust flow.",
+            "You can flip a line's activity on or off at any point during the day from the same Setup screen — no need to regenerate the schedule.",
+            "Turn a line's activity OFF: associates in that specific (line × activity) cell are freed to the Unassigned pool. The board keeps the cell visible for that line only, marked 'not planned today' — other lines with the same activity are unaffected.",
+            "Turn a line's activity BACK ON: the cell becomes active again (empty). Place freed associates using the normal click-to-edit adjust flow.",
         ],
     },
     {
@@ -233,7 +233,7 @@ export default function SopPage() {
                     </h2>
                     <ul className="space-y-2 text-sm text-emerald-100/90">
                         <li className="flex gap-2"><span className="text-emerald-400 mt-0.5">✔</span><span>Mark absentees on Setup BEFORE generating so the plan is realistic.</span></li>
-                        <li className="flex gap-2"><span className="text-emerald-400 mt-0.5">✔</span><span>Deselect any area you're not running today from Setup's 'Areas to Run' — the board keeps it visible as 'not planned' and frees any assigned associates.</span></li>
+                        <li className="flex gap-2"><span className="text-emerald-400 mt-0.5">✔</span><span>Deselect specific line activities from Setup's 'Activities Per Line' (e.g. skip Testing on E2 only) — the board keeps that single cell visible as 'not planned' and frees its associates.</span></li>
                         <li className="flex gap-2"><span className="text-emerald-400 mt-0.5">✔</span><span>Always read the Fill Shortages preview before hitting Confirm — reshuffles are shown up-front.</span></li>
                         <li className="flex gap-2"><span className="text-emerald-400 mt-0.5">✔</span><span>Use Late Arrival (green tick on the absent chip) rather than manually clicking cells, so displacements are tracked and undoable.</span></li>
                         <li className="flex gap-2"><span className="text-emerald-400 mt-0.5">✔</span><span>LOG the schedule at end of shift so History and Absenteeism reports stay accurate.</span></li>
