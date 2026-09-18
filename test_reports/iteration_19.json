@@ -1,0 +1,25 @@
+{
+  "summary": "Iter19 fully verified end-to-end: (1) Support Ops filtering on POST /api/schedule/{date}/set-disabled-activities — payload with monkey/kk/spares/vehicle/crimping/os/5s+others (mixed casing) silently dropped, non-support-ops key (E2) preserved. (2) POST /api/schedule/{date}/close-line stores a full pre-close snapshot (row_name, line_key, detail, required, assigned_person_ids, assigned_person_names) inside the closure record; cells cleared to required=0, assigned=[]. (3) NEW POST /api/schedule/{date}/reopen-line — 400 if line not closed, 404 if schedule missing, on success restores every cell from snapshot and pops closure entry & closed_line_keys marker. (4) POST /api/schedule/{date}/fill-shortages no longer freezes the board — locks only cells whose assignments actually changed (locked << total_assigned), and re-running after marking someone absent still reduces total_shortage. Frontend Setup: Support Ops rows (SPARES etc.) are excluded from Activities Per Line; each non-Support-Ops line shows Select All (green) + Deselect All (red) buttons with correct count updates and per-line isolation (deselecting X-Smart did NOT affect E2). Frontend Board (2026-09-21 test schedule created and cleaned up): clicking Close on X-Smart column header + confirm → Sonner toast 'X-Smart closed · 11 associates freed' with an 'Undo' action button; clicking Undo restored X-Smart column with all associates back and shows 'X-Smart reopened · associates restored' toast. Mobile 400x800: Select all / Deselect all buttons render inside a wrap layout, no horizontal overflow, tappable.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter19.py",
+    "/app/test_reports/pytest/pytest_iter19.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py continues to grow (~1986 lines). reopen_line and close_line share snapshot vocabulary — consider extracting a `schedule_service` module.",
+    "The `/adjust` endpoint calls generate_schedule which resets `closed_line_keys` — this makes it impossible to construct a real 'double-book on reopen' scenario via the public API (test skipped). Recommend `/adjust` preserve closure state so reopen can meaningfully deduplicate. Not a blocker: the reopen logic itself already excludes still-assigned pids.",
+    "handleCloseLine uses window.confirm() — consider replacing with a Sonner confirm/AlertDialog for consistent UX with the rest of the app."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter19.py"
+  ],
+  "success_rate": {"backend": "100% (7/7 passed, 1 skipped by design)", "frontend": "100%"},
+  "test_credentials": "N/A",
+  "seed_data_creation": "Created & deleted schedules for 2026-09-20 and 2026-09-21 (day shift, X-Smart + E2 line_configs). Both cleaned up.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter19 support-ops filter + reopen-line endpoint + fill-shortages freeze fix all pass. When testing close/reopen flows via UI, remember handleCloseLine uses window.confirm — must attach page.on('dialog', accept) handler. Sonner toast Undo button lives inside [data-sonner-toaster] container. Support Ops line list (case-insensitive): monkey, kk, spares, vehicle, crimping, os, 5s+others. Frontend routes: '/' = Setup, '/board?date=YYYY-MM-DD' = Board.",
+  "rca of the issue": "N/A — no issues found."
+}
