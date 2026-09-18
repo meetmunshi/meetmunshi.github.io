@@ -47,6 +47,7 @@ const steps = [
         body: [
             "Rows = Areas (P&C ASSEMBLY, SUB ASSEMBLY-1/2/3, FRAME, TESTING, PRE-PACKING, SPYDER, TROLLEY).",
             "Columns = Assembly lines (X-Smart, E2, SK300, GX300…). Support Ops on the right groups small lines (Monkey, KK, Spares, Vehicle, Crimping, OS, 5S+Others).",
+            "Next to each line name a small grey number (e.g. · 11) shows the total associates currently assigned to that line — a quick headcount without pulling focus from the cells.",
             "Each cell shows assigned names. Red = shortage. The bottom of the board has Absent and Unassigned rows.",
         ],
     },

@@ -250,6 +250,26 @@ export default function BoardPage() {
         return m;
     }, [schedule]);
 
+    // Total associates assigned per line_key (excluding closed lines' cleared cells).
+    // Used to render the subtle grey headcount next to each line name on the board.
+    const assignedByLineKey = useMemo(() => {
+        const m = {};
+        const closed = new Set(schedule?.closed_line_keys || []);
+        (schedule?.assignments || []).forEach((a) => {
+            if (closed.has(a.line_key)) return;
+            m[a.line_key] = (m[a.line_key] || 0) + (a.assigned_person_ids?.length || 0);
+        });
+        return m;
+    }, [schedule]);
+
+    // Total assigned across all Support Ops lines (for the merged column header)
+    const supportAssignedCount = useMemo(() => {
+        return supportItems.reduce(
+            (acc, it) => acc + it.assignments.reduce((s, a) => s + (a.assigned_person_ids?.length || 0), 0),
+            0,
+        );
+    }, [supportItems]);
+
     // All skill names available across the workforce (union of persons.skills keys where any=true)
     const skillOptions = useMemo(() => {
         const s = new Set();
@@ -755,6 +775,7 @@ export default function BoardPage() {
                             </th>
                             {colKeys.map((k) => {
                                 const isClosed = closedKeys.has(k);
+                                const headCount = assignedByLineKey[k] || 0;
                                 return (
                                 <th
                                     key={k}
@@ -762,7 +783,18 @@ export default function BoardPage() {
                                     data-testid={`col-header-${k}`}
                                 >
                                     <div className="flex items-center justify-between gap-2">
-                                        <span>{k}</span>
+                                        <span className="flex items-baseline gap-1.5">
+                                            <span>{k}</span>
+                                            {!isClosed && (
+                                                <span
+                                                    className="font-mono-ibm text-[10px] font-normal normal-case tracking-normal text-zinc-500"
+                                                    data-testid={`col-headcount-${k}`}
+                                                    title={`${headCount} associate${headCount === 1 ? "" : "s"} assigned to ${k}`}
+                                                >
+                                                    · {headCount}
+                                                </span>
+                                            )}
+                                        </span>
                                         {isClosed ? (
                                             <span
                                                 className="text-[9px] uppercase tracking-widest font-bold text-red-300 bg-red-500/15 border border-red-500/40 px-1.5 py-0.5"
@@ -789,7 +821,16 @@ export default function BoardPage() {
                                 className="grid-cell px-4 py-3 text-left font-chivo uppercase font-bold text-base md:text-lg tracking-tight bg-[#111] w-[260px]"
                                 data-testid="col-header-support"
                             >
-                                Support Ops
+                                <span className="flex items-baseline gap-1.5">
+                                    <span>Support Ops</span>
+                                    <span
+                                        className="font-mono-ibm text-[10px] font-normal normal-case tracking-normal text-zinc-500"
+                                        data-testid="col-headcount-support"
+                                        title={`${supportAssignedCount} associate${supportAssignedCount === 1 ? "" : "s"} across Support Ops`}
+                                    >
+                                        · {supportAssignedCount}
+                                    </span>
+                                </span>
                             </th>
                         </tr>
                     </thead>
@@ -1088,6 +1129,13 @@ export default function BoardPage() {
                             <div className="px-3 py-2 bg-[#111] border-b border-white/10 flex items-center justify-between gap-2">
                                 <div className="font-chivo font-bold uppercase tracking-tight text-lg flex items-center gap-2">
                                     <span>{k}</span>
+                                    <span
+                                        className="font-mono-ibm text-[10px] font-normal normal-case tracking-normal text-zinc-500"
+                                        data-testid={`mobile-col-headcount-${k}`}
+                                        title={`${colAssigned} associate${colAssigned === 1 ? "" : "s"} assigned to ${k}`}
+                                    >
+                                        · {colAssigned}
+                                    </span>
                                     {closedKeys.has(k) && (
                                         <span
                                             className="text-[9px] uppercase tracking-widest font-bold text-red-300 bg-red-500/15 border border-red-500/40 px-1.5 py-0.5"
@@ -1216,8 +1264,15 @@ export default function BoardPage() {
                 {/* Support Ops on mobile */}
                 {supportItems.some((s) => s.planned) && (
                     <div className="border border-white/10 bg-[#0a0a0a]" data-testid="mobile-support-block">
-                        <div className="px-3 py-2 bg-[#111] border-b border-white/10 font-chivo font-bold uppercase tracking-tight text-lg">
-                            Support Ops
+                        <div className="px-3 py-2 bg-[#111] border-b border-white/10 font-chivo font-bold uppercase tracking-tight text-lg flex items-baseline gap-1.5">
+                            <span>Support Ops</span>
+                            <span
+                                className="font-mono-ibm text-[10px] font-normal normal-case tracking-normal text-zinc-500"
+                                data-testid="mobile-col-headcount-support"
+                                title={`${supportAssignedCount} associate${supportAssignedCount === 1 ? "" : "s"} across Support Ops`}
+                            >
+                                · {supportAssignedCount}
+                            </span>
                         </div>
                         <div className="p-2 space-y-2">
                             {supportItems.filter((s) => s.planned).map((s) => (
