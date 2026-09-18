@@ -1,0 +1,24 @@
+{
+  "summary": "Iter17 — Area selection (disabled_row_names) end-to-end verified. Backend: created /app/backend/tests/test_iter17.py (6 tests, ALL PASS): (1) GET /api/areas returns 16 sorted areas including frame/assembly/testing; (2) POST /api/schedule with disabled_row_names sets required=0/shortage=0/assigned=[] for cells in those rows; (3) POST /api/schedule/{date}/set-disabled-areas newly-disabled rows are zeroed & locked (overrides[key]=[], unassigned_keys added), totals recomputed correctly, freed associates land in unassigned pool (not absent, not in any cell); re-enabling restores required from persons_required and removes key from unassigned_keys (unlocked); (4) 404 for missing schedule; (5) regression suggest-line still returns {unassigned_pool_size, suggestions}; (6) regression fill-shortages preview still returns {preview:true, changes}. Frontend Playwright: Setup /: 'Areas To Run' section renders 16 area-checkbox-* checkboxes, count chip 'areas-count' reads '16/16 on', deselect → '15/16 on', 'areas-reset-all' (Enable all) restores '16/16 on'. Board /board?date=2026-08-19&shift=day desktop (1920x1080) with frame disabled: FRAME row shows 'Not Planned' badge next to header + both cell columns (X-Smart, E2) render italic 'not planned today' (cell-frame-X-Smart-not-planned + cell-frame-E2-not-planned data-testids), unassigned pool jumped 44→48 (4 associates freed). Mobile (390x844): mobile-cell-frame-X-Smart-not-planned & mobile-cell-frame-E2-not-planned present in X-Smart & E2 line cards (no edit icons). SOP /sop: 14 step cards render (labels 01..14), step 02 titled 'CHANGE AREAS MID-SHIFT', step 01 body mentions 'Areas to Run', sop-dos panel has emerald-500/30 border + emerald-500/5 bg, sop-donts panel has red-500/30 border + red-500/5 bg — clearly distinct. No regressions.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter17.py",
+    "/app/test_reports/pytest/pytest_iter17.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py set_disabled_areas (L1175-1228) correctly handles delta between current & new disabled sets: newly_disabled zeroes+locks the cell (overrides[key]=[], unassigned_keys.add(key)), newly_enabled restores required from persons_required and REMOVES the key from unassigned_keys/overrides (unlocks for auto-fill). totals recomputed. Note: re-enabled cells do NOT auto-refill assigned_person_ids — freed associates remain in unassigned pool for manager to place via adjust flow, matching the specification.",
+    "server.py _generate_assignments L352-358 forces required=0 for disabled_rows BEFORE consulting required_overrides — correct precedence.",
+    "BoardPage.jsx not-planned rendering (L814, L1135, L2043) has proper data-testid patterns for cell/mobile-cell/support-line + italic zinc-500/600 text + 'NOT PLANNED' badge next to row header. Support Ops small lines already use the same 'not planned today' text pattern (7 support items), so disabled_row_names cells reuse the same visual language cleanly.",
+    "SopPage.jsx L229/L244 uses emerald-500/red-500 with matching /30 border + /5 bg — same design token pair for symmetry; ✔/✘ icons present in each list item."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter17.py"],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "100% (all iter17 UI assertions pass)"},
+  "test_credentials": "none",
+  "seed_data_creation": "Reset baseline for 2026-08-19 day X-Smart+E2 during both backend and frontend runs; final state left with disabled_row_names=[] (clean).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter17 fully verified. Frontend uses testids: areas-section, areas-count, areas-reset-all, area-checkbox-{name}, area-row-{name}, cell-{row}-{line}-not-planned, mobile-cell-{row}-{line}-not-planned, support-line-{line}-not-planned, sop-dos, sop-donts. Backend: 'row_name' values from line_details are lowercase (e.g. 'frame', 'p&c assembly', 'sub assembly - 1'). set-disabled-areas is DELTA-based: pass full desired list of disabled areas each time. Re-enabling does NOT auto-reassign associates — they stay in unassigned pool.",
+  "rca of the issue": "N/A — all acceptance criteria pass on first run."
+}
