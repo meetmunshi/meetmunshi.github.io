@@ -174,6 +174,32 @@ export default function AnalyticsPage() {
                     )}
                 </section>
             </div>
+
+            {/* Closures log */}
+            {(data.closures || []).length > 0 && (
+                <section className="border border-white/10 bg-[#111] mt-6" data-testid="card-closures">
+                    <div className="px-4 py-3 border-b border-white/10 flex items-center gap-2">
+                        <svg className="w-4 h-4 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18.36 6.64A9 9 0 1 1 5.64 6.64"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+                        <h3 className="font-chivo uppercase font-bold tracking-tight text-sm">Line Closures This Month · {data.closures.length}</h3>
+                    </div>
+                    <div className="divide-y divide-white/5">
+                        {data.closures.map((c, i) => (
+                            <div key={i} className="px-4 py-2 flex items-center justify-between text-sm" data-testid={`closure-${i}`}>
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <span className="font-chivo font-bold uppercase tracking-tight text-zinc-100">{c.line_key || c.line}</span>
+                                    <span className="text-zinc-500 text-xs">{c.date} · {c.shift}</span>
+                                </div>
+                                <div className="flex items-center gap-3 text-xs">
+                                    <span className="font-mono-ibm text-red-400">{c.freed_count} freed</span>
+                                    <span className="text-zinc-500 font-mono-ibm">
+                                        {c.closed_at ? new Date(c.closed_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }) : "—"}
+                                    </span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+            )}
         </div>
     );
 }

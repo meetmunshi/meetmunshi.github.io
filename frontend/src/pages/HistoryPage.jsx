@@ -150,6 +150,15 @@ export default function HistoryPage() {
                                             {s.total_shortage > 0 && (
                                                 <span className="ml-1 text-red-400">−{s.total_shortage}</span>
                                             )}
+                                            {(s.closures?.length || 0) > 0 && (
+                                                <span
+                                                    className="ml-1 text-red-300 border border-red-500/40 bg-red-500/10 px-1"
+                                                    title={`${s.closures.length} line closure${s.closures.length === 1 ? "" : "s"}`}
+                                                    data-testid={`cal-closures-${c.iso}-${s.shift}`}
+                                                >
+                                                    ⏻{s.closures.length}
+                                                </span>
+                                            )}
                                         </Link>
                                         <button
                                             type="button"

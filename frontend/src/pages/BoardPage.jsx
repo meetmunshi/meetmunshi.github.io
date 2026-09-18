@@ -16,6 +16,9 @@ import {
     suggestReplacement,
     lateArrival,
     undoLateArrival,
+    closeLine,
+    suggestLineToStart,
+    startLine,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,6 +50,8 @@ import {
     Wand2,
     Undo2,
     UserCheck,
+    PowerOff,
+    Play,
 } from "lucide-react";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -89,6 +94,8 @@ export default function BoardPage() {
     const [fillApplying, setFillApplying] = useState(false);
     const [filters, setFilters] = useState({ q: "", skill: "", line: "" });
     const clearFilters = () => setFilters({ q: "", skill: "", line: "" });
+    const [lineSuggest, setLineSuggest] = useState(null); // { unassigned_pool_size, suggestions[] } | null
+    const [startingLine, setStartingLine] = useState(null); // line name being started
     const boardRef = useRef(null);
 
     const setTv = (on) => {
@@ -184,6 +191,7 @@ export default function BoardPage() {
 
     const { rowNames, colKeys, matrix, summary, absentPersons, supportItems, plannedLines, unassignedPersons } = useMemo(() => {
         if (!schedule) return { rowNames: [], colKeys: [], matrix: {}, summary: null, absentPersons: [], supportItems: [], plannedLines: new Set(), unassignedPersons: [] };
+        const closedSet = new Set(schedule.closed_line_keys || []);
         const cols = [];
         const seenCol = new Set();
         const planned = new Set();
@@ -195,6 +203,7 @@ export default function BoardPage() {
                 if (SUPPORT_LINES.includes(c.line)) return; // handled separately
                 for (let r = 1; r <= (c.run_count || 1); r++) {
                     const k = r === 1 ? c.line : `${c.line} #${r}`;
+                    if (closedSet.has(k)) return; // closed lines drop off the board
                     if (!seenCol.has(k)) { cols.push(k); seenCol.add(k); }
                 }
             });
@@ -204,6 +213,7 @@ export default function BoardPage() {
         const mtx = {};
         (schedule.assignments || []).forEach((a) => {
             if (SUPPORT_LINES.includes(a.line)) return;
+            if (closedSet.has(a.line_key)) return; // drop assignments of closed lines
             if (!seenR.has(a.row_name)) { rns.push(a.row_name); seenR.add(a.row_name); }
             const k = a.row_name + "||" + a.line_key;
             if (!mtx[k]) mtx[k] = [];
@@ -220,18 +230,21 @@ export default function BoardPage() {
             return rns.indexOf(a) - rns.indexOf(b);
         });
 
-        // Support column items: one entry per small line
+        // Support column items: one entry per small line (drop closed support lines)
         const suppByLine = {};
         (schedule.assignments || []).forEach((a) => {
             if (!SUPPORT_LINES.includes(a.line)) return;
+            if (closedSet.has(a.line_key)) return;
             if (!suppByLine[a.line]) suppByLine[a.line] = [];
             suppByLine[a.line].push(a);
         });
-        const supp = SUPPORT_LINES.map((line) => ({
-            line,
-            planned: planned.has(line),
-            assignments: suppByLine[line] || [],
-        }));
+        const supp = SUPPORT_LINES
+            .filter((line) => !closedSet.has(line))
+            .map((line) => ({
+                line,
+                planned: planned.has(line),
+                assignments: suppByLine[line] || [],
+            }));
 
         const abs = (schedule.absent_person_ids || [])
             .map((id) => personById[id])
@@ -318,6 +331,9 @@ export default function BoardPage() {
     // Detail matching helper: dim cells whose detail doesn't match skill filter
     const isDetailMatch = (detail) => !filters.skill || detail === filters.skill;
 
+    // Closed line keys (from schedule doc, updated on load)
+    const closedKeys = useMemo(() => new Set(schedule?.closed_line_keys || []), [schedule]);
+
     if (loading) return <div className="p-12 text-zinc-500">Loading…</div>;
     if (!schedule) {
         return (
@@ -391,6 +407,46 @@ export default function BoardPage() {
             load();
         } catch (e) {
             toast.error(e.response?.data?.detail || e.message);
+        }
+    };
+
+    const handleCloseLine = async (lineKey) => {
+        if (!window.confirm(`Close the ${lineKey} line?\nAll associates currently on this line will move to the Unassigned pool. Other lines are not touched. This action is logged.`)) return;
+        try {
+            const r = await closeLine(date, { shift, line_key: lineKey });
+            toast.success(`${lineKey} closed · ${r.closures?.[r.closures.length - 1]?.freed_count || 0} associates freed`);
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || e.message);
+        }
+    };
+
+    const openLineSuggest = async () => {
+        try {
+            const r = await suggestLineToStart(date, shift);
+            if (!r.suggestions || r.suggestions.length === 0) {
+                toast.info(r.unassigned_pool_size === 0 ? "No unassigned associates available" : "No new lines can be started with the current unassigned pool");
+                return;
+            }
+            setLineSuggest(r);
+        } catch (e) {
+            toast.error(e.response?.data?.detail || e.message);
+        }
+    };
+
+    const handleStartLine = async (lineName) => {
+        setStartingLine(lineName);
+        try {
+            const r = await startLine(date, { shift, line: lineName, priority: 3, run_count: 1 });
+            const assigned = r.assignments.filter(a => a.line === lineName).reduce((s, a) => s + a.assigned_person_ids.length, 0);
+            const required = r.assignments.filter(a => a.line === lineName).reduce((s, a) => s + a.required, 0);
+            toast.success(`${lineName} started · ${assigned}/${required} filled from unassigned pool`);
+            setLineSuggest(null);
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || e.message);
+        } finally {
+            setStartingLine(null);
         }
     };
 
@@ -686,15 +742,38 @@ export default function BoardPage() {
                             <th className="sticky left-0 bg-[#0a0a0a] z-20 grid-cell px-4 py-3 text-left text-[11px] uppercase tracking-[0.25em] text-zinc-400 font-bold w-[220px]">
                                 Area
                             </th>
-                            {colKeys.map((k) => (
+                            {colKeys.map((k) => {
+                                const isClosed = closedKeys.has(k);
+                                return (
                                 <th
                                     key={k}
-                                    className="grid-cell px-4 py-3 text-left font-chivo uppercase font-bold text-base md:text-lg tracking-tight bg-[#111]"
+                                    className={`grid-cell px-4 py-3 text-left font-chivo uppercase font-bold text-base md:text-lg tracking-tight bg-[#111] group ${isClosed ? "opacity-60" : ""}`}
                                     data-testid={`col-header-${k}`}
                                 >
-                                    {k}
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span>{k}</span>
+                                        {isClosed ? (
+                                            <span
+                                                className="text-[9px] uppercase tracking-widest font-bold text-red-300 bg-red-500/15 border border-red-500/40 px-1.5 py-0.5"
+                                                data-testid={`col-closed-${k}`}
+                                            >
+                                                Closed
+                                            </span>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleCloseLine(k)}
+                                                title={`Close ${k} line`}
+                                                aria-label={`Close ${k} line`}
+                                                data-testid={`close-line-btn-${k}`}
+                                                className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-500 bg-red-500/5 hover:bg-red-500/15 p-1 no-print"
+                                            >
+                                                <PowerOff className="w-3 h-3" />
+                                            </button>
+                                        )}
+                                    </div>
                                 </th>
-                            ))}
+                            );})}
                             <th
                                 className="grid-cell px-4 py-3 text-left font-chivo uppercase font-bold text-base md:text-lg tracking-tight bg-[#111] w-[260px]"
                                 data-testid="col-header-support"
@@ -906,6 +985,16 @@ export default function BoardPage() {
                                             What else can we run?
                                         </button>
                                     )}
+                                    {unassignedPersons.length > 0 && (
+                                        <button
+                                            onClick={openLineSuggest}
+                                            data-testid="suggest-start-line-btn"
+                                            className="mt-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-emerald-200 hover:text-white border border-emerald-500/40 hover:border-emerald-500 px-2 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 font-bold no-print w-fit"
+                                        >
+                                            <Play className="w-3 h-3" />
+                                            Suggest best line to run
+                                        </button>
+                                    )}
                                 </div>
                             </th>
                             <td
@@ -974,15 +1063,37 @@ export default function BoardPage() {
                     const colAssigned = cellsInCol.reduce((s, c) => s + c.ids.length, 0);
                     const colRequired = cellsInCol.reduce((s, c) => s + c.required, 0);
                     return (
-                        <div key={k} className="border border-white/10 bg-[#0a0a0a]" data-testid={`mobile-line-${k}`}>
-                            <div className="px-3 py-2 bg-[#111] border-b border-white/10 flex items-center justify-between">
-                                <div className="font-chivo font-bold uppercase tracking-tight text-lg">{k}</div>
+                        <div key={k} className={`border border-white/10 bg-[#0a0a0a] ${closedKeys.has(k) ? "opacity-60" : ""}`} data-testid={`mobile-line-${k}`}>
+                            <div className="px-3 py-2 bg-[#111] border-b border-white/10 flex items-center justify-between gap-2">
+                                <div className="font-chivo font-bold uppercase tracking-tight text-lg flex items-center gap-2">
+                                    <span>{k}</span>
+                                    {closedKeys.has(k) && (
+                                        <span
+                                            className="text-[9px] uppercase tracking-widest font-bold text-red-300 bg-red-500/15 border border-red-500/40 px-1.5 py-0.5"
+                                            data-testid={`mobile-col-closed-${k}`}
+                                        >
+                                            Closed
+                                        </span>
+                                    )}
+                                </div>
                                 <div className="text-[10px] uppercase tracking-widest text-zinc-400 flex items-center gap-2">
                                     <span>{colAssigned}/{colRequired}</span>
                                     {colShortage > 0 && (
                                         <span className="text-red-400 border border-red-500/50 bg-red-500/10 px-1.5 py-0.5">
                                             −{colShortage}
                                         </span>
+                                    )}
+                                    {!closedKeys.has(k) && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleCloseLine(k)}
+                                            title={`Close ${k}`}
+                                            aria-label={`Close ${k}`}
+                                            data-testid={`mobile-close-line-${k}`}
+                                            className="text-red-400 border border-red-500/40 bg-red-500/5 p-1"
+                                        >
+                                            <PowerOff className="w-3 h-3" />
+                                        </button>
                                     )}
                                 </div>
                             </div>
@@ -1187,24 +1298,33 @@ export default function BoardPage() {
                         {unassignedPersons.length === 0 ? (
                             <div className="text-xs italic text-zinc-500">Everyone allocated</div>
                         ) : (
-                            <div className="flex flex-wrap gap-1.5">
-                                {unassignedPersons.map((p) => {
-                                    const isMatch = matchedIds && matchedIds.has(p.id);
-                                    const dim = filterActive && !isMatch;
-                                    return (
-                                        <span
-                                            key={p.id}
-                                            className={`inline-flex items-center border text-xs px-2 py-1 ${
-                                                filterActive && isMatch
-                                                    ? "border-yellow-400 bg-yellow-400/20 text-yellow-100"
-                                                    : "border-amber-500/40 bg-amber-500/10 text-amber-200"
-                                            } ${dim ? "opacity-25" : ""}`}
-                                        >
-                                            {p.name} {p.surname}
-                                        </span>
-                                    );
-                                })}
-                            </div>
+                            <>
+                                <button
+                                    onClick={openLineSuggest}
+                                    data-testid="mobile-suggest-start-line-btn"
+                                    className="mb-2 inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-emerald-200 border border-emerald-500/40 px-2 py-1 bg-emerald-500/10 font-bold"
+                                >
+                                    <Play className="w-3 h-3" /> Suggest best line to run
+                                </button>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {unassignedPersons.map((p) => {
+                                        const isMatch = matchedIds && matchedIds.has(p.id);
+                                        const dim = filterActive && !isMatch;
+                                        return (
+                                            <span
+                                                key={p.id}
+                                                className={`inline-flex items-center border text-xs px-2 py-1 ${
+                                                    filterActive && isMatch
+                                                        ? "border-yellow-400 bg-yellow-400/20 text-yellow-100"
+                                                        : "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                                                } ${dim ? "opacity-25" : ""}`}
+                                            >
+                                                {p.name} {p.surname}
+                                            </span>
+                                        );
+                                    })}
+                                </div>
+                            </>
                         )}
                     </div>
                 </div>
@@ -1389,6 +1509,63 @@ export default function BoardPage() {
                             onCancel={closeEdit}
                         />
                     )}
+                </DialogContent>
+            </Dialog>
+
+            {/* Suggest-a-Line Dialog (start a line using unassigned pool) */}
+            <Dialog open={!!lineSuggest} onOpenChange={(o) => !o && !startingLine && setLineSuggest(null)}>
+                <DialogContent className="rounded-none border-zinc-800 bg-[#0f0f0f] text-zinc-100 max-w-xl max-h-[85vh] overflow-hidden flex flex-col" data-testid="suggest-start-line-dialog">
+                    <DialogHeader>
+                        <DialogTitle className="font-chivo uppercase tracking-tight text-2xl">
+                            Suggest a Line to Start
+                        </DialogTitle>
+                        <DialogDescription className="text-zinc-400">
+                            {lineSuggest?.unassigned_pool_size ?? 0} associates are unassigned. Ranked by how many of them fit each line's skill needs.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="overflow-y-auto flex-1 divide-y divide-white/5 border border-zinc-800">
+                        {(lineSuggest?.suggestions || []).map((s, i) => {
+                            const isBest = i === 0;
+                            return (
+                                <div key={s.line} className="px-4 py-3 flex items-center justify-between gap-3" data-testid={`suggest-line-row-${s.line}`}>
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-chivo font-bold uppercase tracking-tight">{s.line}</span>
+                                            {isBest && (
+                                                <span className="text-[9px] uppercase tracking-widest text-black bg-emerald-400 px-1.5 py-0.5 font-bold">Best Fit</span>
+                                            )}
+                                        </div>
+                                        <div className="text-xs text-zinc-500 mt-0.5">
+                                            {s.assignable_count}/{s.required} associates match · {s.coverage_pct}% coverage
+                                        </div>
+                                        <div className="h-1.5 bg-white/5 mt-1 w-40">
+                                            <div className="h-full bg-emerald-500/70" style={{ width: `${s.coverage_pct}%` }} />
+                                        </div>
+                                    </div>
+                                    <Button
+                                        onClick={() => handleStartLine(s.line)}
+                                        disabled={!!startingLine || s.assignable_count === 0}
+                                        data-testid={`start-line-btn-${s.line}`}
+                                        className="rounded-none bg-emerald-500 hover:bg-emerald-500/85 text-black uppercase tracking-widest text-[10px] font-bold px-3 py-2"
+                                    >
+                                        <Play className="w-3 h-3 mr-1" />
+                                        {startingLine === s.line ? "Starting…" : "Start"}
+                                    </Button>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <DialogFooter className="mt-3">
+                        <Button
+                            variant="outline"
+                            className="rounded-none border-zinc-700 text-zinc-300 hover:bg-zinc-900 uppercase tracking-widest text-xs"
+                            disabled={!!startingLine}
+                            onClick={() => setLineSuggest(null)}
+                            data-testid="suggest-start-line-cancel"
+                        >
+                            Close
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 

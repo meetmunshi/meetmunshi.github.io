@@ -29,22 +29,22 @@ export default function AppLayout() {
         <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col md:flex-row">
             {!tv && (
             <aside
-                className="w-full md:w-56 md:shrink-0 border-b md:border-b-0 md:border-r border-white/10 bg-[#0a0a0a] flex md:flex-col no-print overflow-x-auto md:overflow-visible"
+                className="w-full md:w-60 md:shrink-0 border-b md:border-b-0 md:border-r border-white/10 bg-[#0a0a0a] flex md:flex-col no-print overflow-x-auto md:overflow-visible"
                 data-testid="app-sidebar"
             >
-                <div className="px-5 py-4 md:py-6 border-r md:border-r-0 md:border-b border-white/10 shrink-0 bg-gradient-to-b from-[#0a2a5e] to-[#0a1a3e]">
+                <div className="px-5 py-5 md:py-6 border-r md:border-r-0 md:border-b border-white/10 shrink-0 bg-gradient-to-b from-[#0a2a5e] to-[#0a1a3e]">
                     <div className="flex items-center gap-3">
                         <img
                             src="/logo/ffm-logo.png"
                             alt="Fast & Fluid"
-                            className="h-14 w-auto"
+                            className="h-10 md:h-11 w-auto shrink-0"
                             data-testid="brand-logo"
                         />
-                        <div className="hidden md:block">
-                            <div className="text-xs tracking-[0.25em] uppercase text-white/85 font-bold">
+                        <div className="hidden md:block min-w-0">
+                            <div className="text-[11px] tracking-[0.2em] uppercase text-white/85 font-bold leading-tight">
                                 Scheduling
                             </div>
-                            <div className="text-xs tracking-[0.2em] uppercase text-white/60 mt-0.5">
+                            <div className="text-[11px] tracking-[0.2em] uppercase text-white/60 mt-0.5 leading-tight">
                                 Board
                             </div>
                         </div>

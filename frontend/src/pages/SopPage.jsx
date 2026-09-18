@@ -3,6 +3,7 @@ import {
     ClipboardList, Users, LayoutGrid, PlayCircle,
     Sparkles, Lock, Upload, Monitor, BarChart3, Flame,
     UserCheck, Undo2, Search, Smartphone, Trash2, CalendarDays, Eye,
+    PowerOff, Play,
 } from "lucide-react";
 
 const steps = [
@@ -71,6 +72,26 @@ const steps = [
     },
     {
         n: "07",
+        title: "Close a Line Mid-Shift",
+        icon: PowerOff,
+        body: [
+            "Hover any line column on the Board (or tap the power icon on the mobile card) and confirm to close that line for the rest of the shift.",
+            "All associates on that line move to the Unassigned pool. No other line is touched. The board removes the closed column entirely so you always see only what's running now.",
+            "The closure is stamped with a timestamp and appears in Analytics ('Line Closures This Month') and as a ⏻ badge on the History calendar.",
+        ],
+    },
+    {
+        n: "08",
+        title: "Start a New Line Mid-Shift",
+        icon: Play,
+        body: [
+            "Once anyone is unassigned, click 'Suggest best line to run' below the Unassigned pool. A ranked list opens with each candidate line and the % of it your idle staff can cover.",
+            "The top row is tagged 'BEST FIT'. Click Start on any option — the tool auto-assigns as many unassigned associates as skill match allows.",
+            "Associates who don't fit the new line stay unassigned so you can place them manually on any cell.",
+        ],
+    },
+    {
+        n: "09",
         title: "Mark Attendance Anywhere",
         icon: Users,
         body: [
@@ -79,7 +100,7 @@ const steps = [
         ],
     },
     {
-        n: "08",
+        n: "10",
         title: "On Your Phone",
         icon: Smartphone,
         body: [
@@ -89,7 +110,7 @@ const steps = [
         ],
     },
     {
-        n: "09",
+        n: "11",
         title: "Freeze & Share",
         icon: Lock,
         body: [
@@ -98,17 +119,17 @@ const steps = [
         ],
     },
     {
-        n: "10",
+        n: "12",
         title: "Review the Month",
         icon: BarChart3,
         body: [
-            "Analytics: pick any month from the dropdown to see three panels — Top Absenteeism (associates ranked by absences with the exact dates), Lines Hit by Absence (which lines lost the most seats when someone was off), and Line Utilisation (total runs and days each line was scheduled).",
-            "History (calendar): jump into any past day's board. Hover a day (desktop) or tap the trash icon (mobile) to delete an incorrect record — you'll be asked to confirm, and locked schedules show an extra warning.",
+            "Analytics: pick any month from the dropdown to see three panels — Top Absenteeism (associates ranked by absences with the exact dates), Lines Hit by Absence (which lines lost the most seats when someone was off), and Line Utilisation (total runs and days each line was scheduled). A 'Line Closures This Month' section lists every mid-shift closure with its date, time, and freed count.",
+            "History (calendar): jump into any past day's board. Hover a day (desktop) or tap the trash icon (mobile) to delete an incorrect record — you'll be asked to confirm, and locked schedules show an extra warning. A ⏻N badge marks days where lines were closed.",
             "Heatmap: which Area × Line pairs are fragile — pick trainees for cross-skilling.",
         ],
     },
     {
-        n: "11",
+        n: "13",
         title: "Refresh Data",
         icon: Upload,
         body: [
@@ -129,6 +150,8 @@ const glossary = [
     { term: "Run count", def: "If a line runs 2× today, a second column '<line> #2' is created. Analytics counts total runs per line for the month." },
     { term: "Log", def: "Freezes the schedule and marks the day as recorded (shows in History and Absenteeism reports)." },
     { term: "Delete record", def: "In History, tap the trash icon on any day/shift to remove that record. Logged schedules require an extra confirmation." },
+    { term: "Close a line", def: "Ends a running line mid-shift. Every associate on it moves to the Unassigned pool; the column disappears from the board and the closure is stamped with a time in Analytics & History." },
+    { term: "Suggest best line to run", def: "Ranks every idle master line by how many unassigned associates can fill it. Start the top choice to auto-fill it from the free pool in one click." },
 ];
 
 export default function SopPage() {

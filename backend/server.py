@@ -93,6 +93,8 @@ class Schedule(BaseModel):
     total_required: int = 0
     total_assigned: int = 0
     total_shortage: int = 0
+    closures: List[dict] = []                     # [{line_key, line, closed_at, freed_count}]
+    closed_line_keys: List[str] = []
 
 
 # ----------------- Excel parsing & seeding -----------------
@@ -1148,6 +1150,210 @@ async def mark_absent_from_board(date: str, payload: dict):
     return await generate_schedule(req)
 
 
+class CloseLineRequest(BaseModel):
+    shift: str = "day"
+    line_key: str
+
+
+class StartLineRequest(BaseModel):
+    shift: str = "day"
+    line: str
+    priority: int = 3
+    run_count: int = 1
+
+
+def _current_unassigned_ids(sched: dict, persons: List[dict]) -> List[str]:
+    """All non-absent persons who are not currently assigned to any cell."""
+    absent = set(sched.get("absent_person_ids", []))
+    assigned: set = set()
+    for a in sched.get("assignments", []):
+        assigned.update(a.get("assigned_person_ids", []))
+    return [p["id"] for p in persons if p["id"] not in absent and p["id"] not in assigned]
+
+
+async def _get_schedule_doc(date: str, shift: str) -> dict:
+    doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Schedule not found")
+    return doc
+
+
+@api_router.post("/schedule/{date}/close-line", response_model=Schedule)
+async def close_line(date: str, req: CloseLineRequest):
+    """Close a running line mid-shift. Frees every associate on that line to the unassigned
+    pool, logs the closure with a timestamp, and leaves every other cell untouched."""
+    sched = await db.schedules.find_one({"date": date, "shift": req.shift}, {"_id": 0})
+    if not sched:
+        raise HTTPException(404, "Schedule not found")
+    if req.line_key in (sched.get("closed_line_keys") or []):
+        raise HTTPException(400, f"Line '{req.line_key}' is already closed")
+    line_cells = [a for a in sched["assignments"] if a["line_key"] == req.line_key]
+    if not line_cells:
+        raise HTTPException(404, f"Line '{req.line_key}' not found in schedule")
+
+    freed_count = 0
+    line_base = req.line_key.split(" #")[0]
+    for a in line_cells:
+        freed_count += len(a["assigned_person_ids"])
+        a["assigned_person_ids"] = []
+        a["assigned_person_names"] = []
+        a["required"] = 0
+        a["shortage"] = 0
+
+    now = datetime.now(timezone.utc).isoformat()
+    closure = {
+        "line_key": req.line_key,
+        "line": line_base,
+        "closed_at": now,
+        "freed_count": freed_count,
+    }
+    closures = list(sched.get("closures") or [])
+    closures.append(closure)
+    closed_keys = list(set((sched.get("closed_line_keys") or []) + [req.line_key]))
+
+    # Lock the closed cells so future auto-fills don't repopulate them
+    unassigned_keys = set(sched.get("unassigned_keys") or [])
+    overrides = dict(sched.get("overrides") or {})
+    for a in line_cells:
+        key = f"{a['row_name']}||{a['line_key']}||{a['detail']}"
+        overrides[key] = []
+        unassigned_keys.add(key)
+
+    total_shortage = sum(a.get("shortage", 0) for a in sched["assignments"])
+    total_assigned = sum(len(a.get("assigned_person_ids", [])) for a in sched["assignments"])
+    total_required = sum(a.get("required", 0) for a in sched["assignments"])
+
+    await db.schedules.update_one(
+        {"date": date, "shift": req.shift},
+        {"$set": {
+            "assignments": sched["assignments"],
+            "closures": closures,
+            "closed_line_keys": closed_keys,
+            "unassigned_keys": list(unassigned_keys),
+            "overrides": overrides,
+            "total_shortage": total_shortage,
+            "total_assigned": total_assigned,
+            "total_required": total_required,
+        }},
+    )
+    return await _get_schedule_doc(date, req.shift)
+
+
+@api_router.get("/schedule/{date}/suggest-line")
+async def suggest_line(date: str, shift: str = "day"):
+    """Recommend which lines could be started now using only the current unassigned pool.
+    Ranks each candidate line by how many idle-skilled associates could fill it via
+    maximum bipartite matching."""
+    sched = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
+    if not sched:
+        raise HTTPException(404, "Schedule not found")
+    persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
+    details = await db.line_details.find({}, {"_id": 0}).to_list(1000)
+    skill_totals = _skill_totals(persons)
+
+    unassigned_ids = set(_current_unassigned_ids(sched, persons))
+    unassigned_pool = [p for p in persons if p["id"] in unassigned_ids]
+
+    active_base_lines = {a["line_key"].split(" #")[0] for a in sched.get("assignments", [])}
+
+    suggestions = []
+    for line_name in sorted({d["line"] for d in details}):
+        # Skip lines that already have cells in the schedule (running or closed)
+        if line_name in active_base_lines:
+            continue
+        line_details_this = [d for d in details if d["line"] == line_name]
+        cells_input = [
+            {"detail": d["detail"], "required": int(d.get("persons_required", 0))}
+            for d in line_details_this
+        ]
+        total_required = sum(c["required"] for c in cells_input)
+        if total_required <= 0:
+            continue
+        # Match against only the unassigned pool
+        matching = _max_bipartite_matching(cells_input, unassigned_pool, set(), skill_totals)
+        assignable = sum(len(v) for v in matching.values())
+        suggestions.append({
+            "line": line_name,
+            "assignable_count": assignable,
+            "required": total_required,
+            "coverage_pct": round((assignable / total_required) * 100) if total_required else 0,
+        })
+
+    suggestions.sort(key=lambda s: (-s["coverage_pct"], -s["assignable_count"], s["line"]))
+    return {
+        "unassigned_pool_size": len(unassigned_pool),
+        "suggestions": suggestions,
+    }
+
+
+@api_router.post("/schedule/{date}/start-line", response_model=Schedule)
+async def start_line(date: str, req: StartLineRequest):
+    """Start a new line mid-shift. Adds the line to line_configs, creates cells, and
+    auto-assigns as many unassigned-pool associates as skill-match allows.
+    Associates who don't fit stay unassigned for manual placement."""
+    sched = await db.schedules.find_one({"date": date, "shift": req.shift}, {"_id": 0})
+    if not sched:
+        raise HTTPException(404, "Schedule not found")
+    details = await db.line_details.find({"line": req.line}, {"_id": 0}).to_list(200)
+    if not details:
+        raise HTTPException(404, f"Line '{req.line}' not found in master data")
+    persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
+    person_by_id = {p["id"]: p for p in persons}
+    skill_totals = _skill_totals(persons)
+
+    active_base_lines = {a["line_key"].split(" #")[0] for a in sched.get("assignments", [])}
+    if req.line in active_base_lines:
+        raise HTTPException(400, f"Line '{req.line}' is already running today")
+
+    unassigned_ids = set(_current_unassigned_ids(sched, persons))
+    unassigned_pool = [p for p in persons if p["id"] in unassigned_ids]
+
+    cells_input = [
+        {"detail": d["detail"], "required": int(d.get("persons_required", 0))}
+        for d in details
+    ]
+    matching = _max_bipartite_matching(cells_input, unassigned_pool, set(), skill_totals)
+
+    new_line_key = req.line
+    new_assignments = []
+    for ci, d in enumerate(details):
+        ids = matching.get(ci, [])
+        names = [_person_full_name(person_by_id[i]) for i in ids if i in person_by_id]
+        required = int(d.get("persons_required", 0))
+        new_assignments.append({
+            "row_name": d.get("row_name", d["detail"]),
+            "line": req.line,
+            "run": 1,
+            "line_key": new_line_key,
+            "detail": d["detail"],
+            "required": required,
+            "assigned_person_ids": ids,
+            "assigned_person_names": names,
+            "shortage": max(0, required - len(ids)),
+        })
+
+    sched["assignments"].extend(new_assignments)
+    line_configs = list(sched.get("line_configs") or [])
+    line_configs.append({"line": req.line, "priority": req.priority, "run_count": req.run_count})
+
+    total_required = sum(a.get("required", 0) for a in sched["assignments"])
+    total_assigned = sum(len(a.get("assigned_person_ids", [])) for a in sched["assignments"])
+    total_shortage = sum(a.get("shortage", 0) for a in sched["assignments"])
+
+    await db.schedules.update_one(
+        {"date": date, "shift": req.shift},
+        {"$set": {
+            "assignments": sched["assignments"],
+            "line_configs": line_configs,
+            "total_required": total_required,
+            "total_assigned": total_assigned,
+            "total_shortage": total_shortage,
+        }},
+    )
+    return await _get_schedule_doc(date, req.shift)
+
+
+
 @api_router.post("/schedule/{date}/log")
 async def log_schedule(date: str, shift: str = "day"):
     """Freeze the current schedule as 'logged' so it counts for History reports."""
@@ -1360,6 +1566,20 @@ async def monthly_analytics(month: Optional[str] = None):
         for line in sorted(line_runs.keys(), key=lambda k: (-line_runs[k], -len(line_days[k]), k))
     ]
 
+    # --- 4) Closures logged this month (line, date, time, freed_count)
+    closures_log = []
+    for s in docs:
+        for c in s.get("closures", []) or []:
+            closures_log.append({
+                "date": s["date"],
+                "shift": s.get("shift", "day"),
+                "line": _canonical_line(c.get("line", ""), master_lines),
+                "line_key": c.get("line_key"),
+                "closed_at": c.get("closed_at"),
+                "freed_count": c.get("freed_count", 0),
+            })
+    closures_log.sort(key=lambda x: x.get("closed_at", ""), reverse=True)
+
     return {
         "month": month,
         "months_available": months_available,
@@ -1367,6 +1587,7 @@ async def monthly_analytics(month: Optional[str] = None):
         "top_absentees": top_absentees,
         "lines_hit_by_absence": lines_hit_by_absence,
         "line_utilisation": line_utilisation,
+        "closures": closures_log,
     }
 
 
