@@ -89,7 +89,7 @@ class Schedule(BaseModel):
     unassigned_keys: List[str] = []
     required_overrides: Dict[str, int] = {}
     logged_at: Optional[str] = None
-    previous_state: Optional[dict] = None
+    history: List[dict] = []                      # bounded undo stack (last 5 actions)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     total_required: int = 0
     total_assigned: int = 0
@@ -97,6 +97,38 @@ class Schedule(BaseModel):
     closures: List[dict] = []                     # [{line_key, line, closed_at, freed_count}]
     closed_line_keys: List[str] = []
     disabled_activities: Dict[str, List[str]] = {}   # line -> row_names deselected only for that line
+
+
+MAX_HISTORY = 5
+
+
+def _undoable_snapshot(sched_doc: dict, action: str) -> dict:
+    """Capture the subset of schedule fields needed to restore this state."""
+    return {
+        "action": action,
+        "snapshot_at": datetime.now(timezone.utc).isoformat(),
+        "line_configs": [dict(c) for c in (sched_doc.get("line_configs") or [])],
+        "absent_person_ids": list(sched_doc.get("absent_person_ids") or []),
+        "overrides": dict(sched_doc.get("overrides") or {}),
+        "unassigned_keys": list(sched_doc.get("unassigned_keys") or []),
+        "required_overrides": dict(sched_doc.get("required_overrides") or {}),
+        "assignments": [dict(a) for a in (sched_doc.get("assignments") or [])],
+        "closures": [dict(c) for c in (sched_doc.get("closures") or [])],
+        "closed_line_keys": list(sched_doc.get("closed_line_keys") or []),
+        "disabled_activities": {k: list(v) for k, v in (sched_doc.get("disabled_activities") or {}).items()},
+        "total_required": sched_doc.get("total_required", 0),
+        "total_assigned": sched_doc.get("total_assigned", 0),
+        "total_shortage": sched_doc.get("total_shortage", 0),
+    }
+
+
+async def _push_history(date: str, shift: str, sched_doc: dict, action: str) -> None:
+    """Append a snapshot of the CURRENT schedule state to history (bounded to MAX_HISTORY)."""
+    snap = _undoable_snapshot(sched_doc, action)
+    await db.schedules.update_one(
+        {"date": date, "shift": shift},
+        {"$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
+    )
 
 
 # ----------------- Excel parsing & seeding -----------------
@@ -414,11 +446,19 @@ async def generate_schedule(req: ScheduleRequest):
         total_required=total_req, total_assigned=total_assigned, total_shortage=total_short,
     )
     doc = sched.model_dump()
-    # Preserve logged_at across regenerations so edits don't silently unlog a frozen schedule
-    existing = await db.schedules.find_one({"date": req.date, "shift": req.shift}, {"_id": 0, "logged_at": 1})
-    if existing and existing.get("logged_at"):
-        doc["logged_at"] = existing["logged_at"]
-        sched.logged_at = existing["logged_at"]
+    # Preserve implicit server-side state across regenerations so mutating callers
+    # (adjust, late-arrival, etc.) don't accidentally wipe closures / undo history.
+    existing = await db.schedules.find_one(
+        {"date": req.date, "shift": req.shift},
+        {"_id": 0, "logged_at": 1, "history": 1, "closures": 1, "closed_line_keys": 1},
+    )
+    if existing:
+        if existing.get("logged_at"):
+            doc["logged_at"] = existing["logged_at"]
+            sched.logged_at = existing["logged_at"]
+        doc["history"] = existing.get("history") or []
+        doc["closures"] = existing.get("closures") or []
+        doc["closed_line_keys"] = existing.get("closed_line_keys") or []
     await db.schedules.replace_one({"date": req.date, "shift": req.shift}, doc, upsert=True)
     return sched
 
@@ -672,62 +712,6 @@ def _collect_used_person_ids(sched_doc: dict) -> set:
     return used
 
 
-def _build_suggestion(
-    line: str, dets: List[dict], persons: List[dict],
-    skill_totals: Dict[str, int], absent_set: set, used_globally: set,
-) -> dict:
-    total_req, total_filled, _, reports = _simulate_line_fill(
-        dets, persons, skill_totals, absent_set, used_globally,
-    )
-    cell_reports = []
-    for r in reports:
-        d = r["detail"]
-        picks = r["picks"]
-        cell_reports.append({
-            "row_name": d.get("row_name") or d["detail"],
-            "detail": d["detail"],
-            "required": d["persons_required"],
-            "eligible": len(picks),
-            "assigned_names": [_person_full_name(p) for p in picks],
-            "shortage": max(0, d["persons_required"] - len(picks)),
-        })
-    coverage = 1.0 if total_req == 0 else total_filled / total_req
-    return {
-        "line": line,
-        "required": total_req,
-        "fillable": total_filled,
-        "coverage_pct": round(coverage * 100),
-        "fully_covered": total_filled == total_req and total_req > 0,
-        "cells": cell_reports,
-    }
-
-
-@api_router.get("/schedule/{date}/suggest-lines")
-async def suggest_lines(date: str, shift: str = "day"):
-    """Using the free pool (unassigned + not absent), suggest additional lines that could run today."""
-    sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
-    if not sched_doc:
-        raise HTTPException(404, "Schedule not found")
-
-    persons = await db.persons.find({}, {"_id": 0}).to_list(1000)
-    details = await db.line_details.find({}, {"_id": 0}).to_list(1000)
-    absent_set = set(sched_doc.get("absent_person_ids", []))
-    used = _collect_used_person_ids(sched_doc)
-
-    active_lines = {c["line"] for c in sched_doc["line_configs"]}
-    free_pool = [p for p in persons if p["id"] not in absent_set and p["id"] not in used]
-    skill_totals = _skill_totals(persons)
-
-    # Candidate lines = not active
-    details_by_line = _group_details_by_line([d for d in details if d["line"] not in active_lines])
-    suggestions = [
-        _build_suggestion(line, dets, persons, skill_totals, absent_set, used)
-        for line, dets in details_by_line.items()
-    ]
-    suggestions.sort(key=lambda s: (-s["coverage_pct"], -s["fillable"], s["line"]))
-    return {"free_pool_size": len(free_pool), "suggestions": suggestions}
-
-
 @api_router.post("/schedule/{date}/fill-shortages")
 async def fill_shortages(date: str, shift: str = "day", preview: bool = False):
     """Optimally fill every shortage using max bipartite matching (Kuhn's).
@@ -829,8 +813,15 @@ async def fill_shortages(date: str, shift: str = "day", preview: bool = False):
         overrides=overrides,
         unassigned_keys=list(unassigned),
         required_overrides=dict(sched_doc.get("required_overrides", {}) or {}),
+        disabled_activities=sched_doc.get("disabled_activities", {}) or {},
     )
-    return await generate_schedule(req)
+    snap = _undoable_snapshot(sched_doc, "Fill all shortages")
+    result = await generate_schedule(req)
+    await db.schedules.update_one(
+        {"date": date, "shift": shift},
+        {"$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
+    )
+    return result
 
 
 @api_router.get("/schedule/{date}/suggest-replacement")
@@ -914,6 +905,7 @@ async def adjust_cell(date: str, payload: dict):
     sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
     if not sched_doc:
         raise HTTPException(404, "Schedule not found")
+    snap = _undoable_snapshot(sched_doc, f"Manual edit · {cell_key}")
     overrides = sched_doc.get("overrides", {}) or {}
     unassigned = set(sched_doc.get("unassigned_keys", []) or [])
     required_overrides = dict(sched_doc.get("required_overrides", {}) or {})
@@ -933,8 +925,14 @@ async def adjust_cell(date: str, payload: dict):
         overrides=overrides,
         unassigned_keys=list(unassigned),
         required_overrides=required_overrides,
+        disabled_activities=sched_doc.get("disabled_activities", {}) or {},
     )
-    return await generate_schedule(req)
+    result = await generate_schedule(req)
+    await db.schedules.update_one(
+        {"date": date, "shift": shift},
+        {"$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
+    )
+    return result
 
 
 @api_router.post("/schedule/{date}/late-arrival")
@@ -1005,13 +1003,7 @@ async def late_arrival(date: str, payload: dict):
         return {"person": {"id": pid, "name": _person_full_name(person)}, **build_options()}
 
     # --- Mutation path: snapshot then assign ---
-    snapshot = {
-        "line_configs": sched_doc["line_configs"],
-        "absent_person_ids": sched_doc["absent_person_ids"],
-        "overrides": sched_doc.get("overrides", {}),
-        "unassigned_keys": sched_doc.get("unassigned_keys", []),
-        "required_overrides": sched_doc.get("required_overrides", {}),
-    }
+    snap = _undoable_snapshot(sched_doc, f"Late arrival · {_person_full_name(person)}")
 
     # Remove from absent
     absent = [a for a in sched_doc["absent_person_ids"] if a != pid]
@@ -1099,12 +1091,13 @@ async def late_arrival(date: str, payload: dict):
         overrides=overrides,
         unassigned_keys=list(unassigned),
         required_overrides=dict(sched_doc.get("required_overrides", {}) or {}),
+        disabled_activities=sched_doc.get("disabled_activities", {}) or {},
     )
     new_sched = await generate_schedule(req)
-    # Attach snapshot for undo
+    # Push snapshot onto the undo stack (bounded to MAX_HISTORY)
     await db.schedules.update_one(
         {"date": date, "shift": shift},
-        {"$set": {"previous_state": snapshot}},
+        {"$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
     )
     return {
         "schedule": new_sched.model_dump(),
@@ -1113,29 +1106,36 @@ async def late_arrival(date: str, payload: dict):
     }
 
 
-@api_router.post("/schedule/{date}/undo")
-async def undo_late_arrival(date: str, shift: str = "day"):
+@api_router.post("/schedule/{date}/undo", response_model=Schedule)
+async def undo_last_action(date: str, shift: str = "day"):
+    """Undo the most recent mutating action. Steps back through up to MAX_HISTORY
+    snapshots one at a time (fully restores the schedule doc to the popped state)."""
     sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
     if not sched_doc:
         raise HTTPException(404, "Schedule not found")
-    snap = sched_doc.get("previous_state")
-    if not snap:
+    history = list(sched_doc.get("history") or [])
+    if not history:
         raise HTTPException(400, "Nothing to undo")
-    req = ScheduleRequest(
-        date=date, shift=shift,
-        line_configs=[LineConfig(**c) for c in snap["line_configs"]],
-        absent_person_ids=snap["absent_person_ids"],
-        overrides=snap.get("overrides", {}),
-        unassigned_keys=snap.get("unassigned_keys", []),
-        required_overrides=snap.get("required_overrides", {}),
-    )
-    result = await generate_schedule(req)
-    # Clear the snapshot to prevent double-undo
+    snap = history.pop()  # most recent
     await db.schedules.update_one(
         {"date": date, "shift": shift},
-        {"$set": {"previous_state": None}},
+        {"$set": {
+            "line_configs": snap.get("line_configs", []),
+            "absent_person_ids": snap.get("absent_person_ids", []),
+            "overrides": snap.get("overrides", {}),
+            "unassigned_keys": snap.get("unassigned_keys", []),
+            "required_overrides": snap.get("required_overrides", {}),
+            "assignments": snap.get("assignments", []),
+            "closures": snap.get("closures", []),
+            "closed_line_keys": snap.get("closed_line_keys", []),
+            "disabled_activities": snap.get("disabled_activities", {}),
+            "total_required": snap.get("total_required", 0),
+            "total_assigned": snap.get("total_assigned", 0),
+            "total_shortage": snap.get("total_shortage", 0),
+            "history": history,
+        }},
     )
-    return result
+    return await _get_schedule_doc(date, shift)
 
 
 @api_router.post("/schedule/{date}/mark-absent")
@@ -1149,6 +1149,10 @@ async def mark_absent_from_board(date: str, payload: dict):
     sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
     if not sched_doc:
         raise HTTPException(404, "Schedule not found")
+
+    persons = await db.persons.find({"id": person_id}, {"_id": 0, "name": 1, "surname": 1}).to_list(1)
+    person_label = _person_full_name(persons[0]) if persons else person_id
+    snap = _undoable_snapshot(sched_doc, f"Mark absent · {person_label}")
 
     absent = list(sched_doc.get("absent_person_ids", []) or [])
     if person_id not in absent:
@@ -1176,8 +1180,14 @@ async def mark_absent_from_board(date: str, payload: dict):
         overrides=overrides,
         unassigned_keys=list(unassigned),
         required_overrides=required_overrides,
+        disabled_activities=sched_doc.get("disabled_activities", {}) or {},
     )
-    return await generate_schedule(req)
+    result = await generate_schedule(req)
+    await db.schedules.update_one(
+        {"date": date, "shift": shift},
+        {"$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
+    )
+    return result
 
 
 class SetDisabledActivitiesRequest(BaseModel):
@@ -1203,6 +1213,7 @@ async def set_disabled_activities(date: str, req: SetDisabledActivitiesRequest):
     sched = await db.schedules.find_one({"date": date, "shift": req.shift}, {"_id": 0})
     if not sched:
         raise HTTPException(404, "Schedule not found")
+    snap = _undoable_snapshot(sched, "Activity change")
     details = await db.line_details.find({}, {"_id": 0}).to_list(1000)
     req_per_detail = {(d["line"], d["detail"]): int(d.get("persons_required", 0)) for d in details}
 
@@ -1265,7 +1276,8 @@ async def set_disabled_activities(date: str, req: SetDisabledActivitiesRequest):
             "total_required": total_required,
             "total_assigned": total_assigned,
             "total_shortage": total_shortage,
-        }},
+        },
+         "$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
     )
     return await _get_schedule_doc(date, req.shift)
 
@@ -1310,6 +1322,7 @@ async def close_line(date: str, req: CloseLineRequest):
     line_cells = [a for a in sched["assignments"] if a["line_key"] == req.line_key]
     if not line_cells:
         raise HTTPException(404, f"Line '{req.line_key}' not found in schedule")
+    snap = _undoable_snapshot(sched, f"Close line · {req.line_key}")
 
     freed_count = 0
     line_base = req.line_key.split(" #")[0]
@@ -1369,7 +1382,8 @@ async def close_line(date: str, req: CloseLineRequest):
             "total_shortage": total_shortage,
             "total_assigned": total_assigned,
             "total_required": total_required,
-        }},
+        },
+         "$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
     )
     return await _get_schedule_doc(date, req.shift)
 
@@ -1392,6 +1406,7 @@ async def reopen_line(date: str, req: ReopenLineRequest):
     closed_keys = list(sched.get("closed_line_keys") or [])
     if req.line_key not in closed_keys:
         raise HTTPException(400, f"Line '{req.line_key}' is not closed")
+    pre_snap = _undoable_snapshot(sched, f"Reopen line · {req.line_key}")
 
     # Find the most recent closure for this line_key
     closure = None
@@ -1463,7 +1478,8 @@ async def reopen_line(date: str, req: ReopenLineRequest):
             "total_required": total_required,
             "total_assigned": total_assigned,
             "total_shortage": total_shortage,
-        }},
+        },
+         "$push": {"history": {"$each": [pre_snap], "$slice": -MAX_HISTORY}}},
     )
     return await _get_schedule_doc(date, req.shift)
 
@@ -1533,6 +1549,7 @@ async def start_line(date: str, req: StartLineRequest):
     active_base_lines = {a["line_key"].split(" #")[0] for a in sched.get("assignments", [])}
     if req.line in active_base_lines:
         raise HTTPException(400, f"Line '{req.line}' is already running today")
+    snap = _undoable_snapshot(sched, f"Start line · {req.line}")
 
     unassigned_ids = set(_current_unassigned_ids(sched, persons))
     unassigned_pool = [p for p in persons if p["id"] in unassigned_ids]
@@ -1577,7 +1594,8 @@ async def start_line(date: str, req: StartLineRequest):
             "total_required": total_required,
             "total_assigned": total_assigned,
             "total_shortage": total_shortage,
-        }},
+        },
+         "$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
     )
     return await _get_schedule_doc(date, req.shift)
 

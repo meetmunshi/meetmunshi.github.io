@@ -79,7 +79,7 @@ const steps = [
             "In the Absent row, click the green tick icon on an associate's chip to open the Late Arrival dialog.",
             "The tool suggests the best fitting open cell (marked 'BEST FIT') and lists all planned lines they're skilled for. Click Approve on any option.",
             "If the chosen cell is already full, a Conflict dialog appears — pick which existing associate to displace, or send the late arrival to the Unassigned pool.",
-            "Made a mistake? Click Undo in the toolbar to roll back the last late-arrival action.",
+            "Made a mistake? Use the Undo button in the toolbar to step back — the counter next to Undo shows how many recent actions are stacked (up to the last 5).",
         ],
     },
     {
@@ -98,7 +98,7 @@ const steps = [
         title: "Start a New Line Mid-Shift",
         icon: Play,
         body: [
-            "Once anyone is unassigned, click 'Suggest best line to run' below the Unassigned pool. A ranked list opens with each candidate line and the % of it your idle staff can cover.",
+            "Once anyone is unassigned, click 'Suggest another line to run' below the Unassigned pool. A ranked list opens with each candidate line and the % of it your idle staff can cover.",
             "The top row is tagged 'BEST FIT'. Click Start on any option — the tool auto-assigns as many unassigned associates as skill match allows.",
             "Associates who don't fit the new line stay unassigned so you can place them manually on any cell.",
         ],
@@ -157,14 +157,14 @@ const glossary = [
     { term: "Assigned / Free / Absent", def: "Assigned = on a cell. Free = in the Unassigned pool. Absent = marked off today." },
     { term: "Fill All Shortages", def: "Explores every skill-valid reshuffle and shows a preview of the best arrangement — you Confirm or Cancel." },
     { term: "Late Arrival", def: "Bring someone back from the Absent row into a cell. Auto-suggests the best fit and warns about conflicts." },
-    { term: "Undo", def: "Reverts the last Late Arrival (one step back). Toast confirms once done." },
+    { term: "Undo", def: "Steps back through the last 5 mutating actions on the board (manual edits, fill shortages, mark absent, late arrival, close/reopen line, activity toggles, start line). The counter shows how many steps are stacked." },
     { term: "Search & Filter (Board)", def: "Search by name; filter by Skill or Line. Matches glow yellow, everything else dims." },
     { term: "Priority", def: "Lines with lower numbers grab specialists first when the workforce is tight." },
     { term: "Run count", def: "If a line runs 2× today, a second column '<line> #2' is created. Analytics counts total runs per line for the month." },
     { term: "Log", def: "Freezes the schedule and marks the day as recorded (shows in History and Absenteeism reports)." },
     { term: "Delete record", def: "In History, tap the trash icon on any day/shift to remove that record. Logged schedules require an extra confirmation." },
     { term: "Close a line", def: "Ends a running line mid-shift. Every associate on it moves to the Unassigned pool; the column disappears from the board. A 10-second Undo toast lets you reopen the line with associates restored to their original cells. Closure is stamped with a time in Analytics & History." },
-    { term: "Suggest best line to run", def: "Ranks every idle master line by how many unassigned associates can fill it. Start the top choice to auto-fill it from the free pool in one click." },
+    { term: "Suggest another line to run", def: "Ranks every idle master line by how many unassigned associates can fill it. Start the top choice to auto-fill it from the free pool in one click." },
 ];
 
 export default function SopPage() {

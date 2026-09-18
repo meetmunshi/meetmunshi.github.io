@@ -9,8 +9,6 @@ import {
     adjustCell,
     fillShortages,
     previewFillShortages,
-    suggestLines,
-    generateSchedule,
     markAbsentFromBoard,
     logSchedule,
     suggestReplacement,
@@ -44,8 +42,6 @@ import {
     Camera,
     UserPlus,
     Sparkles,
-    Lightbulb,
-    Plus,
     Lock,
     CheckCircle2,
     Wand2,
@@ -87,8 +83,6 @@ export default function BoardPage() {
     const [editCell, setEditCell] = useState(null);
     const [lastFetched, setLastFetched] = useState(null);
     const [tick, setTick] = useState(0);
-    const [suggestions, setSuggestions] = useState(null);
-    const [suggestOpen, setSuggestOpen] = useState(false);
     const [lateArr, setLateArr] = useState(null); // {person, best_fit, planned, not_planned}
     const [displaceConflict, setDisplaceConflict] = useState(null);
     const [fillPreview, setFillPreview] = useState(null); // {initial_shortage, remaining_shortage, filled_count, changes[]}
@@ -108,42 +102,10 @@ export default function BoardPage() {
     const load = () => {
         setLoading(true);
         Promise.all([fetchSchedule(date, shift), fetchPersons()])
-            .then(([s, p]) => { setSchedule(s); setPersons(p); setLastFetched(Date.now()); setSuggestions(null); })
+            .then(([s, p]) => { setSchedule(s); setPersons(p); setLastFetched(Date.now()); })
             .finally(() => setLoading(false));
     };
     useEffect(load, [date, shift]);
-
-    const loadSuggestions = async () => {
-        try {
-            const s = await suggestLines(date, shift);
-            setSuggestions(s);
-            setSuggestOpen(true);
-        } catch (e) {
-            toast.error(e.response?.data?.detail || e.message);
-        }
-    };
-
-    const addLineToSchedule = async (line) => {
-        if (!schedule) return;
-        const cfgs = [...(schedule.line_configs || [])];
-        const maxPrio = cfgs.reduce((m, c) => Math.max(m, c.priority || 0), 0);
-        cfgs.push({ line, priority: maxPrio + 1, run_count: 1 });
-        try {
-            await generateSchedule({
-                date,
-                shift,
-                line_configs: cfgs,
-                absent_person_ids: schedule.absent_person_ids || [],
-                overrides: schedule.overrides || {},
-                unassigned_keys: schedule.unassigned_keys || [],
-            });
-            toast.success(`Added ${line} to today's schedule`);
-            setSuggestOpen(false);
-            load();
-        } catch (e) {
-            toast.error(e.response?.data?.detail || e.message);
-        }
-    };
 
     // "Updated N ago" ticker
     useEffect(() => {
@@ -538,9 +500,15 @@ export default function BoardPage() {
     };
 
     const doUndo = async () => {
+        const history = schedule?.history || [];
+        if (history.length === 0) {
+            toast.info("Nothing to undo");
+            return;
+        }
+        const last = history[history.length - 1];
         try {
             await undoLateArrival(date, shift);
-            toast.success("Undone");
+            toast.success(`Undone: ${last?.action || "last action"}`);
             load();
         } catch (e) {
             toast.error(e.response?.data?.detail || e.message);
@@ -601,11 +569,25 @@ export default function BoardPage() {
                     <Button
                         variant="outline"
                         onClick={doUndo}
+                        disabled={(schedule?.history?.length || 0) === 0}
                         data-testid="undo-btn"
-                        title="Undo last late-arrival assignment"
-                        className="rounded-none border-white/15 text-white bg-transparent hover:bg-white/10 uppercase tracking-widest text-xs"
+                        title={
+                            schedule?.history?.length
+                                ? `Undo last action (${schedule.history[schedule.history.length - 1]?.action || ""}) · ${schedule.history.length} step${schedule.history.length > 1 ? "s" : ""} available`
+                                : "Nothing to undo"
+                        }
+                        className="rounded-none border-white/15 text-white bg-transparent hover:bg-white/10 uppercase tracking-widest text-xs disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                        <Undo2 className="w-4 h-4 mr-2" /> Undo
+                        <Undo2 className="w-4 h-4 mr-2" />
+                        Undo
+                        {(schedule?.history?.length || 0) > 0 && (
+                            <span
+                                data-testid="undo-count"
+                                className="ml-2 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 bg-white/15 text-[10px] font-mono-ibm"
+                            >
+                                {schedule.history.length}
+                            </span>
+                        )}
                     </Button>
                     <Button
                         variant="outline"
@@ -1026,22 +1008,12 @@ export default function BoardPage() {
                                     </div>
                                     {unassignedPersons.length > 0 && (
                                         <button
-                                            onClick={loadSuggestions}
-                                            data-testid="suggest-lines-btn"
-                                            className="mt-2 inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-amber-200 hover:text-white border border-amber-500/40 hover:border-amber-500 px-2 py-1 bg-amber-500/10 hover:bg-amber-500/20 font-bold no-print w-fit"
-                                        >
-                                            <Lightbulb className="w-3 h-3" />
-                                            What else can we run?
-                                        </button>
-                                    )}
-                                    {unassignedPersons.length > 0 && (
-                                        <button
                                             onClick={openLineSuggest}
                                             data-testid="suggest-start-line-btn"
-                                            className="mt-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-emerald-200 hover:text-white border border-emerald-500/40 hover:border-emerald-500 px-2 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 font-bold no-print w-fit"
+                                            className="mt-2 inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-emerald-200 hover:text-white border border-emerald-500/40 hover:border-emerald-500 px-2 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 font-bold no-print w-fit"
                                         >
                                             <Play className="w-3 h-3" />
-                                            Suggest best line to run
+                                            Suggest another line to run
                                         </button>
                                     )}
                                 </div>
@@ -1372,7 +1344,7 @@ export default function BoardPage() {
                                     data-testid="mobile-suggest-start-line-btn"
                                     className="mb-2 inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-emerald-200 border border-emerald-500/40 px-2 py-1 bg-emerald-500/10 font-bold"
                                 >
-                                    <Play className="w-3 h-3" /> Suggest best line to run
+                                    <Play className="w-3 h-3" /> Suggest another line to run
                                 </button>
                                 <div className="flex flex-wrap gap-1.5">
                                     {unassignedPersons.map((p) => {
@@ -1397,44 +1369,6 @@ export default function BoardPage() {
                     </div>
                 </div>
             </div>
-
-            {/* Suggestions Dialog */}
-            <Dialog open={suggestOpen} onOpenChange={setSuggestOpen}>
-                <DialogContent
-                    className="rounded-none bg-[#111] border-white/15 text-white max-w-2xl"
-                    data-testid="suggestions-dialog"
-                >
-                    <DialogHeader>
-                        <DialogTitle className="font-chivo uppercase tracking-tight flex items-center gap-2">
-                            <Lightbulb className="w-5 h-5 text-amber-400" />
-                            Lines you could also run
-                        </DialogTitle>
-                        <DialogDescription className="text-xs text-zinc-500">
-                            {suggestions?.free_pool_size || 0} free people available · sorted by coverage
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="max-h-96 overflow-y-auto -mx-6 px-6">
-                        {(!suggestions || suggestions.suggestions.length === 0) && (
-                            <div className="p-8 text-center text-zinc-500 text-sm">
-                                All lines are already running today.
-                            </div>
-                        )}
-                        {suggestions?.suggestions.map((s) => (
-                            <SuggestionRow key={s.line} s={s} onAdd={() => addLineToSchedule(s.line)} />
-                        ))}
-                    </div>
-                    <DialogFooter>
-                        <Button
-                            variant="outline"
-                            onClick={() => setSuggestOpen(false)}
-                            data-testid="suggest-close-btn"
-                            className="rounded-none border-white/15 text-white bg-transparent hover:bg-white/10 uppercase text-xs tracking-widest"
-                        >
-                            Close
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
 
             {/* Late Arrival dialog */}
             <Dialog open={!!lateArr} onOpenChange={(o) => !o && setLateArr(null)}>
@@ -1997,59 +1931,6 @@ function OptionRow({ opt, onPick, notPlanned, testid }) {
             >
                 Assign
             </Button>
-        </div>
-    );
-}
-
-function SuggestionRow({ s, onAdd }) {
-    const color =
-        s.fully_covered ? "border-emerald-500 text-emerald-300"
-        : s.coverage_pct >= 60 ? "border-amber-500 text-amber-300"
-        : "border-red-500/50 text-red-300";
-    const barColor =
-        s.fully_covered ? "bg-emerald-500"
-        : s.coverage_pct >= 60 ? "bg-amber-500"
-        : "bg-red-500";
-    return (
-        <div
-            className={`border ${color} border-l-4 bg-[#0a0a0a] px-4 py-3 mb-2`}
-            data-testid={`suggestion-${s.line}`}
-        >
-            <div className="flex items-center justify-between gap-3 mb-2">
-                <div>
-                    <div className="font-chivo font-bold uppercase text-lg tracking-tight text-white">
-                        {s.line}
-                    </div>
-                    <div className="text-[10px] uppercase tracking-widest text-zinc-500 mt-0.5">
-                        {s.fillable}/{s.required} slots · {s.coverage_pct}%
-                        {s.fully_covered && " · fully covered"}
-                    </div>
-                </div>
-                <Button
-                    onClick={onAdd}
-                    disabled={s.fillable === 0}
-                    data-testid={`suggestion-add-${s.line}`}
-                    className={`rounded-none uppercase text-xs tracking-widest font-bold ${
-                        s.fully_covered ? "bg-emerald-500 hover:bg-emerald-500/85 text-black"
-                        : "bg-white/10 hover:bg-white/20 text-white"
-                    }`}
-                >
-                    <Plus className="w-4 h-4 mr-1" /> Add
-                </Button>
-            </div>
-            <div className="h-1.5 bg-white/5">
-                <div
-                    className={`h-full ${barColor}`}
-                    style={{ width: `${Math.min(100, s.coverage_pct)}%` }}
-                />
-            </div>
-            {!s.fully_covered && s.cells.filter((c) => c.shortage > 0).length > 0 && (
-                <div className="mt-2 text-[10px] text-zinc-500">
-                    Gap: {s.cells.filter((c) => c.shortage > 0).map((c) => (
-                        `${c.row_name} (${c.shortage} short)`
-                    )).join(" · ")}
-                </div>
-            )}
         </div>
     );
 }

@@ -33,8 +33,6 @@ export const fillShortages = (date, shift = "day") =>
     api.post(`/schedule/${date}/fill-shortages`, null, { params: { shift } }).then((r) => r.data);
 export const previewFillShortages = (date, shift = "day") =>
     api.post(`/schedule/${date}/fill-shortages`, null, { params: { shift, preview: true } }).then((r) => r.data);
-export const suggestLines = (date, shift = "day") =>
-    api.get(`/schedule/${date}/suggest-lines`, { params: { shift } }).then((r) => r.data);
 export const fetchAreas = () => api.get("/areas").then((r) => r.data);
 export const setDisabledActivities = (date, payload) =>
     api.post(`/schedule/${date}/set-disabled-activities`, payload).then((r) => r.data);
