@@ -1499,12 +1499,24 @@ async def suggest_line(date: str, shift: str = "day"):
     unassigned_ids = set(_current_unassigned_ids(sched, persons))
     unassigned_pool = [p for p in persons if p["id"] in unassigned_ids]
 
-    active_base_lines = {a["line_key"].split(" #")[0] for a in sched.get("assignments", [])}
+    closed_keys = set(sched.get("closed_line_keys") or [])
+    # A base line is "running" only if it has at least one line_key that isn't closed.
+    # Lines whose every run is closed remain candidates so a manager can re-activate them.
+    running_base_lines = {
+        a["line_key"].split(" #")[0]
+        for a in sched.get("assignments", [])
+        if a["line_key"] not in closed_keys
+    }
+    closed_base_lines = {
+        a["line_key"].split(" #")[0]
+        for a in sched.get("assignments", [])
+        if a["line_key"] in closed_keys
+    } - running_base_lines
 
     suggestions = []
     for line_name in sorted({d["line"] for d in details}):
-        # Skip lines that already have cells in the schedule (running or closed)
-        if line_name in active_base_lines:
+        # Skip lines that are currently running; closed lines stay eligible.
+        if line_name in running_base_lines:
             continue
         line_details_this = [d for d in details if d["line"] == line_name]
         cells_input = [
@@ -1522,6 +1534,7 @@ async def suggest_line(date: str, shift: str = "day"):
             "assignable_count": assignable,
             "required": total_required,
             "coverage_pct": round((assignable / total_required) * 100) if total_required else 0,
+            "was_closed": line_name in closed_base_lines,
         })
 
     suggestions.sort(key=lambda s: (-s["coverage_pct"], -s["assignable_count"], s["line"]))
@@ -1547,9 +1560,45 @@ async def start_line(date: str, req: StartLineRequest):
     skill_totals = _skill_totals(persons)
 
     active_base_lines = {a["line_key"].split(" #")[0] for a in sched.get("assignments", [])}
-    if req.line in active_base_lines:
+    closed_keys_set = set(sched.get("closed_line_keys") or [])
+    running_base_lines = {
+        a["line_key"].split(" #")[0]
+        for a in sched.get("assignments", [])
+        if a["line_key"] not in closed_keys_set
+    }
+    if req.line in running_base_lines:
         raise HTTPException(400, f"Line '{req.line}' is already running today")
     snap = _undoable_snapshot(sched, f"Start line · {req.line}")
+
+    # Re-activating a previously fully-closed line: drop its old cells, closure records,
+    # closed_line_keys entries, and any stale line_configs so we can re-seed fresh below.
+    was_closed = req.line in active_base_lines and req.line not in running_base_lines
+    if was_closed:
+        sched["assignments"] = [
+            a for a in sched.get("assignments", [])
+            if a["line_key"].split(" #")[0] != req.line
+        ]
+        sched["closures"] = [
+            c for c in (sched.get("closures") or [])
+            if (c.get("line") or c.get("line_key", "").split(" #")[0]) != req.line
+        ]
+        sched["closed_line_keys"] = [
+            k for k in (sched.get("closed_line_keys") or [])
+            if k.split(" #")[0] != req.line
+        ]
+        # Also clear any locked overrides / unassigned_keys tied to the closed cells
+        def _is_stale(k: str) -> bool:
+            parts = k.split("||")
+            if len(parts) < 2:
+                return False
+            lk = parts[1]
+            return lk == req.line or lk.startswith(req.line + " #")
+        sched["overrides"] = {
+            k: v for k, v in (sched.get("overrides") or {}).items() if not _is_stale(k)
+        }
+        sched["unassigned_keys"] = [
+            k for k in (sched.get("unassigned_keys") or []) if not _is_stale(k)
+        ]
 
     unassigned_ids = set(_current_unassigned_ids(sched, persons))
     unassigned_pool = [p for p in persons if p["id"] in unassigned_ids]
@@ -1579,7 +1628,7 @@ async def start_line(date: str, req: StartLineRequest):
         })
 
     sched["assignments"].extend(new_assignments)
-    line_configs = list(sched.get("line_configs") or [])
+    line_configs = [c for c in (sched.get("line_configs") or []) if c.get("line") != req.line]
     line_configs.append({"line": req.line, "priority": req.priority, "run_count": req.run_count})
 
     total_required = sum(a.get("required", 0) for a in sched["assignments"])
@@ -1591,6 +1640,10 @@ async def start_line(date: str, req: StartLineRequest):
         {"$set": {
             "assignments": sched["assignments"],
             "line_configs": line_configs,
+            "closures": sched.get("closures", []),
+            "closed_line_keys": sched.get("closed_line_keys", []),
+            "overrides": sched.get("overrides", {}),
+            "unassigned_keys": sched.get("unassigned_keys", []),
             "total_required": total_required,
             "total_assigned": total_assigned,
             "total_shortage": total_shortage,

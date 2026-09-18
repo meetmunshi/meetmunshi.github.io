@@ -90,7 +90,7 @@ const steps = [
         body: [
             "Hover any line column on the Board (or tap the power icon on the mobile card) and confirm to close that line for the rest of the shift.",
             "All associates on that line move to the Unassigned pool. No other line is touched. The board removes the closed column entirely so you always see only what's running now.",
-            "Closed by mistake? A toast with an 'Undo' button appears for ~10 seconds — click it to reopen the line and restore every associate back to their original cell (anyone reassigned in the meantime keeps their new spot).",
+            "Closed by mistake? A toast with an 'Undo' button appears for ~10 seconds — click it to reopen the line and restore every associate back to their original cell (anyone reassigned in the meantime keeps their new spot). Beyond that window, closed lines still surface in 'Suggest another line to run' tagged 'REACTIVATE' so you can restart them fresh at any time.",
             "The closure is stamped with a timestamp and appears in Analytics ('Line Closures This Month') and as a ⏻ badge on the History calendar.",
         ],
     },
@@ -100,6 +100,7 @@ const steps = [
         icon: Play,
         body: [
             "Once anyone is unassigned, click 'Suggest another line to run' below the Unassigned pool. A ranked list opens with each candidate line and the % of it your idle staff can cover.",
+            "Previously closed lines still appear in the list, tagged 'REACTIVATE' — click Reactivate to restart them fresh from the current unassigned pool.",
             "The top row is tagged 'BEST FIT'. Click Start on any option — the tool auto-assigns as many unassigned associates as skill match allows.",
             "Associates who don't fit the new line stay unassigned so you can place them manually on any cell.",
         ],
