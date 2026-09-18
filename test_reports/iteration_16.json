@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 16 — Mid-day line closure hides column entirely + SOP updates + sidebar title fix. Backend: created /app/backend/tests/test_iter16.py (8 tests, ALL PASS). Verified: (1) baseline schedule 2026-08-19 day X-Smart+E2 created; (2) POST /api/schedule/{date}/close-line 'X-Smart' sets closed_line_keys, appends closures[] with line/line_key/closed_at/freed_count, zeros required/assigned/shortage on X-Smart cells and preserves other lines; total_required recomputed; (3) second close returns 400; (4) GET /api/schedule/{date} returns closed_line_keys + closures; (5) GET /api/schedules includes closures on schedule doc; (6) GET /api/schedule/{date}/suggest-line returns ranked suggestions sorted by coverage_pct desc with assignable_count/required/coverage_pct fields; (7) POST /api/schedule/{date}/start-line adds line to line_configs, creates cells with auto-assigned unassigned pool, cannot start same line twice; (8) GET /api/analytics/monthly includes closures[] entry with date/shift/line/line_key/closed_at/freed_count. Frontend Playwright (1920x900 desktop): (a) Sidebar 'Scheduling' text right-edge=196.4 sits inside blue box right-edge=239 — no clipping; (b) closing X-Smart via hover close-line-btn: column removed from board entirely (3→2 col headers), no CLOSED column, Lines chip='1', X-Smart cells not visible; (c) 'Suggest best line to run' button appears next to Unassigned pool (55 pool), opens Suggest-a-Line dialog with ranked candidates SLIM (Best Fit, 100%), X-Smart XL 100%, E4 100%, X-Protint 100%, SK300 100%, GX300 100%, Spares 100% each with Start button. Mobile (390x844): (a) 2 line cards pre-close; (b) after mobile-close-line-X-Smart X-Smart card fully removed (1 card left, no CLOSED mobile card, no closed badge). SOP page (/sop): 13 step cards render; contains 'Close a Line' step (step 07) and 'Start a New Line' step (step 08); glossary contains 'Close a line' and 'Suggest best line to run'. No regressions detected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter16.py",
+    "/app/test_reports/pytest/pytest_iter16.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py close_line (L1181-1239) correctly zeroes required/assigned/shortage on closed cells AND locks them via overrides[key]=[] + unassigned_keys.add(key) so future regenerations don't repopulate them — this is the correct fix; total_required is recomputed post-mutation.",
+    "server.py suggest_line (L1242-1286) uses `_max_bipartite_matching` over the unassigned pool only (excluding absents+assigned), which is the correct semantic for 'what can we still run?'. Uses set() as absent_set intentionally because pool is already filtered — clean.",
+    "server.py start_line (L1289-1353) reuses master line details, computes matching against unassigned pool, and rejects re-start via active_base_lines check (line_key.split(' #')[0]) — note this rejection uses BASE line so a running 'X-Smart #2' also blocks 'X-Smart' start, which may or may not be intended (edge case, non-blocking).",
+    "BoardPage.jsx (L192-276) useMemo(closedSet) correctly filters colKeys, matrix entries, and supportItems by closed_line_keys; unassignedPersons computation still includes people freed from closed cells because closed cells now have empty assigned_person_ids — this cascades correctly to the chip count (verified 55 unassigned after closing X-Smart which freed 11 associates).",
+    "AppLayout.jsx (L30-52) fix works: md:w-60 + h-10/h-11 logo + shrink-0 + min-w-0 wrapper + text-[11px] leading-tight — Scheduling text sits at x=102→196, blue box ends at 239, so 43px margin remains. Fix is robust.",
+    "SopPage.jsx now has 13 entries with PowerOff (Close a Line, step 07) and Play (Start a New Line, step 08) plus glossary entries — all render correctly."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter16.py (new — 8 tests, all passing)"
+  ],
+  "success_rate": {"backend": "100% (8/8 iter16)", "frontend": "100% (all iter16 UI assertions pass)"},
+  "test_credentials": "none",
+  "seed_data_creation": "Baseline schedule for 2026-08-19 day (X-Smart p=1 rc=1 + Element 2 p=2 rc=1) generated, mutated by close-line + start-line during tests, then re-seeded at end of playwright run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter16 (mid-day close removes column entirely + SOP updates + sidebar title fix) fully verified. Backend close-line endpoint zeroes cells & locks them (overrides=[], unassigned_keys added). Frontend closedSet filter drops columns/cells/support/mobile cards. Sidebar has md:w-60 + h-10 logo. SOP has 13 steps. Note: 'Element 2' is canonicalised to 'E2' on schedule generation — tests targeting line_key must accommodate. Frontend uses hover-to-reveal close-line-btn on desktop, always-visible on mobile.",
+  "rca of the issue": "N/A — all acceptance criteria pass."
+}
