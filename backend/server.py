@@ -62,6 +62,7 @@ class ScheduleRequest(BaseModel):
     overrides: Dict[str, List[str]] = {}   # key = f"{row_name}||{line_key}||{detail}" or f"{row_name}||{line_key}" -> person_ids
     unassigned_keys: List[str] = []
     required_overrides: Dict[str, int] = {}  # key = f"{row_name}||{line_key}||{detail}" -> new required count
+    disabled_row_names: List[str] = []       # rows the manager has deselected — cells stay visible but required=0
 
 
 class CellAssignment(BaseModel):
@@ -95,6 +96,7 @@ class Schedule(BaseModel):
     total_shortage: int = 0
     closures: List[dict] = []                     # [{line_key, line, closed_at, freed_count}]
     closed_line_keys: List[str] = []
+    disabled_row_names: List[str] = []            # deselected areas — cells rendered as "not planned"
 
 
 # ----------------- Excel parsing & seeding -----------------
@@ -309,12 +311,14 @@ def _generate_assignments(
     overrides: Dict[str, List[str]],
     unassigned_keys: List[str],
     required_overrides: Optional[Dict[str, int]] = None,
+    disabled_row_names: Optional[List[str]] = None,
 ) -> List[CellAssignment]:
     persons = persons or []
     details = details or []
     overrides = overrides or {}
     unassigned_keys = unassigned_keys or []
     required_overrides = required_overrides or {}
+    disabled_rows = set(disabled_row_names or [])
 
     person_total_skills = {p["id"]: sum(1 for v in p.get("skills", {}).values() if v) for p in persons}
     person_by_id = {p["id"]: p for p in persons}
@@ -342,12 +346,16 @@ def _generate_assignments(
         cell_key_detail = f"{row_name}||{line_key}||{detail_name}"
         cell_key_agg = f"{row_name}||{line_key}"
 
-        # Required can be overridden by user (per-detail preferred, else per-aggregate)
+        # Required can be overridden by user (per-detail preferred, else per-aggregate).
+        # Disabled row_names force required=0 regardless of overrides.
         base_required = d["persons_required"]
-        required = required_overrides.get(cell_key_detail)
-        if required is None:
-            required = required_overrides.get(cell_key_agg, base_required)
-        required = max(0, int(required))
+        if row_name in disabled_rows:
+            required = 0
+        else:
+            required = required_overrides.get(cell_key_detail)
+            if required is None:
+                required = required_overrides.get(cell_key_agg, base_required)
+            required = max(0, int(required))
 
         # Overrides — prefer detail-specific key, fall back to aggregate key
         picks = _apply_override_picks(cell_key_detail, overrides, person_by_id, absent_set)
@@ -390,6 +398,7 @@ async def generate_schedule(req: ScheduleRequest):
     assignments = _generate_assignments(
         persons, details, req.line_configs, req.absent_person_ids,
         req.overrides, req.unassigned_keys, req.required_overrides,
+        req.disabled_row_names,
     )
     total_req = sum(a.required for a in assignments)
     total_assigned = sum(len(a.assigned_person_ids) for a in assignments)
@@ -400,6 +409,7 @@ async def generate_schedule(req: ScheduleRequest):
         assignments=assignments, overrides=req.overrides,
         unassigned_keys=req.unassigned_keys,
         required_overrides=req.required_overrides,
+        disabled_row_names=req.disabled_row_names,
         total_required=total_req, total_assigned=total_assigned, total_shortage=total_short,
     )
     doc = sched.model_dump()
@@ -1148,6 +1158,74 @@ async def mark_absent_from_board(date: str, payload: dict):
         required_overrides=required_overrides,
     )
     return await generate_schedule(req)
+
+
+class SetDisabledAreasRequest(BaseModel):
+    shift: str = "day"
+    disabled_row_names: List[str] = []
+
+
+@api_router.get("/areas")
+async def list_areas():
+    """Distinct row_names (areas) across the master line_details."""
+    names = await db.line_details.distinct("row_name")
+    return {"areas": sorted([n for n in names if n])}
+
+
+@api_router.post("/schedule/{date}/set-disabled-areas", response_model=Schedule)
+async def set_disabled_areas(date: str, req: SetDisabledAreasRequest):
+    """Toggle which row_names (areas) are active on the current schedule.
+    Newly disabled areas: cells clear + required=0 + locked; freed associates go to unassigned pool.
+    Re-enabled areas: cells unlocked with required restored from persons_required; associates stay
+    in the unassigned pool for the manager to reassign via the existing adjust flow."""
+    sched = await db.schedules.find_one({"date": date, "shift": req.shift}, {"_id": 0})
+    if not sched:
+        raise HTTPException(404, "Schedule not found")
+    details = await db.line_details.find({}, {"_id": 0}).to_list(1000)
+    req_per_detail = {(d["line"], d["detail"]): int(d.get("persons_required", 0)) for d in details}
+
+    current = set(sched.get("disabled_row_names") or [])
+    new_set = set(req.disabled_row_names or [])
+    newly_disabled = new_set - current
+    newly_enabled = current - new_set
+
+    unassigned_keys = set(sched.get("unassigned_keys") or [])
+    overrides = dict(sched.get("overrides") or {})
+
+    for a in sched["assignments"]:
+        key = f"{a['row_name']}||{a['line_key']}||{a['detail']}"
+        if a["row_name"] in newly_disabled:
+            a["assigned_person_ids"] = []
+            a["assigned_person_names"] = []
+            a["required"] = 0
+            a["shortage"] = 0
+            overrides[key] = []
+            unassigned_keys.add(key)
+        elif a["row_name"] in newly_enabled:
+            base = req_per_detail.get((a["line"], a["detail"]), a.get("required", 0))
+            a["required"] = int(base)
+            a["shortage"] = max(0, a["required"] - len(a.get("assigned_person_ids", [])))
+            # Free the cell so future auto-fills can reach it again
+            overrides.pop(key, None)
+            unassigned_keys.discard(key)
+
+    total_required = sum(a.get("required", 0) for a in sched["assignments"])
+    total_assigned = sum(len(a.get("assigned_person_ids", [])) for a in sched["assignments"])
+    total_shortage = sum(a.get("shortage", 0) for a in sched["assignments"])
+
+    await db.schedules.update_one(
+        {"date": date, "shift": req.shift},
+        {"$set": {
+            "assignments": sched["assignments"],
+            "disabled_row_names": sorted(new_set),
+            "unassigned_keys": list(unassigned_keys),
+            "overrides": overrides,
+            "total_required": total_required,
+            "total_assigned": total_assigned,
+            "total_shortage": total_shortage,
+        }},
+    )
+    return await _get_schedule_doc(date, req.shift)
 
 
 class CloseLineRequest(BaseModel):

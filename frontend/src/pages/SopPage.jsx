@@ -15,11 +15,22 @@ const steps = [
             "Open Setup from the left menu.",
             "Pick today's date and shift.",
             "Tick the assembly lines that will run today. Set Priority (1 = highest, gets people first) and Runs (how many times a line runs today).",
+            "In 'Areas to Run', all areas are ticked by default. Untick any area you're not running today (e.g. no Frame or no Pre-Packing) — deselected areas stay visible on the board as 'not planned today' but hold no seats.",
             "In 'Mark Absent', tick everyone who is not coming in today.",
         ],
     },
     {
         n: "02",
+        title: "Change Areas Mid-Shift",
+        icon: LayoutGrid,
+        body: [
+            "You can flip an area on or off at any point during the day from the same Setup screen — no need to regenerate the schedule.",
+            "Turn an area OFF: every associate in those cells is freed to the Unassigned pool. The board keeps the row visible but marks it 'not planned today'.",
+            "Turn an area BACK ON: cells become active again (empty). Place freed associates using the normal click-to-edit adjust flow.",
+        ],
+    },
+    {
+        n: "03",
         title: "Build the Board",
         icon: PlayCircle,
         body: [
@@ -29,7 +40,7 @@ const steps = [
         ],
     },
     {
-        n: "03",
+        n: "04",
         title: "Read the Board",
         icon: Monitor,
         body: [
@@ -39,7 +50,7 @@ const steps = [
         ],
     },
     {
-        n: "04",
+        n: "05",
         title: "Search & Filter",
         icon: Search,
         body: [
@@ -49,7 +60,7 @@ const steps = [
         ],
     },
     {
-        n: "05",
+        n: "06",
         title: "Fix Shortages (with Preview)",
         icon: Sparkles,
         body: [
@@ -60,7 +71,7 @@ const steps = [
         ],
     },
     {
-        n: "06",
+        n: "07",
         title: "Someone Arrived Late",
         icon: UserCheck,
         body: [
@@ -71,7 +82,7 @@ const steps = [
         ],
     },
     {
-        n: "07",
+        n: "08",
         title: "Close a Line Mid-Shift",
         icon: PowerOff,
         body: [
@@ -81,7 +92,7 @@ const steps = [
         ],
     },
     {
-        n: "08",
+        n: "09",
         title: "Start a New Line Mid-Shift",
         icon: Play,
         body: [
@@ -91,7 +102,7 @@ const steps = [
         ],
     },
     {
-        n: "09",
+        n: "10",
         title: "Mark Attendance Anywhere",
         icon: Users,
         body: [
@@ -100,7 +111,7 @@ const steps = [
         ],
     },
     {
-        n: "10",
+        n: "11",
         title: "On Your Phone",
         icon: Smartphone,
         body: [
@@ -110,7 +121,7 @@ const steps = [
         ],
     },
     {
-        n: "11",
+        n: "12",
         title: "Freeze & Share",
         icon: Lock,
         body: [
@@ -119,7 +130,7 @@ const steps = [
         ],
     },
     {
-        n: "12",
+        n: "13",
         title: "Review the Month",
         icon: BarChart3,
         body: [
@@ -129,7 +140,7 @@ const steps = [
         ],
     },
     {
-        n: "13",
+        n: "14",
         title: "Refresh Data",
         icon: Upload,
         body: [
@@ -214,21 +225,34 @@ export default function SopPage() {
                 </dl>
             </section>
 
-            <section className="border border-emerald-500/30 bg-emerald-500/5 p-6">
-                <h2 className="font-chivo font-bold uppercase text-lg tracking-tight text-emerald-300 mb-2">
-                    Do & Don't
-                </h2>
-                <ul className="space-y-2 text-sm text-zinc-300">
-                    <li>✔ Mark absentees on Setup BEFORE generating so the plan is realistic.</li>
-                    <li>✔ Always read the Fill Shortages preview before hitting Confirm — reshuffles are shown up-front.</li>
-                    <li>✔ Use Late Arrival (green tick on the absent chip) rather than manually clicking cells, so displacements are tracked and undoable.</li>
-                    <li>✔ LOG the schedule at end of shift so History and Absenteeism reports stay accurate.</li>
-                    <li>✔ Use the phone view to mark absentees on the shop floor without touching a laptop.</li>
-                    <li>✘ Don't delete a Logged schedule unless you're truly correcting an error — the report loses that day.</li>
-                    <li>✘ Don't regenerate blindly after manual adjustments — your locks are respected, but a fresh Auto-Plan will discard priorities.</li>
-                    <li>✘ Don't upload a differently-shaped Excel; keep the exact two sheet names and columns.</li>
-                </ul>
-            </section>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <section className="border border-emerald-500/30 bg-emerald-500/5 p-6" data-testid="sop-dos">
+                    <h2 className="font-chivo font-bold uppercase text-lg tracking-tight text-emerald-300 mb-3 flex items-center gap-2">
+                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold">✔</span>
+                        Do
+                    </h2>
+                    <ul className="space-y-2 text-sm text-emerald-100/90">
+                        <li className="flex gap-2"><span className="text-emerald-400 mt-0.5">✔</span><span>Mark absentees on Setup BEFORE generating so the plan is realistic.</span></li>
+                        <li className="flex gap-2"><span className="text-emerald-400 mt-0.5">✔</span><span>Deselect any area you're not running today from Setup's 'Areas to Run' — the board keeps it visible as 'not planned' and frees any assigned associates.</span></li>
+                        <li className="flex gap-2"><span className="text-emerald-400 mt-0.5">✔</span><span>Always read the Fill Shortages preview before hitting Confirm — reshuffles are shown up-front.</span></li>
+                        <li className="flex gap-2"><span className="text-emerald-400 mt-0.5">✔</span><span>Use Late Arrival (green tick on the absent chip) rather than manually clicking cells, so displacements are tracked and undoable.</span></li>
+                        <li className="flex gap-2"><span className="text-emerald-400 mt-0.5">✔</span><span>LOG the schedule at end of shift so History and Absenteeism reports stay accurate.</span></li>
+                        <li className="flex gap-2"><span className="text-emerald-400 mt-0.5">✔</span><span>Use the phone view to mark absentees on the shop floor without touching a laptop.</span></li>
+                    </ul>
+                </section>
+
+                <section className="border border-red-500/30 bg-red-500/5 p-6" data-testid="sop-donts">
+                    <h2 className="font-chivo font-bold uppercase text-lg tracking-tight text-red-300 mb-3 flex items-center gap-2">
+                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-red-500/20 border border-red-500/40 text-red-300 font-bold">✘</span>
+                        Don't
+                    </h2>
+                    <ul className="space-y-2 text-sm text-red-100/90">
+                        <li className="flex gap-2"><span className="text-red-400 mt-0.5">✘</span><span>Delete a Logged schedule unless you're truly correcting an error — the report loses that day.</span></li>
+                        <li className="flex gap-2"><span className="text-red-400 mt-0.5">✘</span><span>Regenerate blindly after manual adjustments — your locks are respected, but a fresh Auto-Plan will discard priorities.</span></li>
+                        <li className="flex gap-2"><span className="text-red-400 mt-0.5">✘</span><span>Upload a differently-shaped Excel; keep the exact two sheet names and columns.</span></li>
+                    </ul>
+                </section>
+            </div>
 
             <div className="mt-10 text-center">
                 <Link

@@ -5,7 +5,9 @@ import {
     fetchLines,
     fetchPersons,
     fetchSchedule,
+    fetchAreas,
     generateSchedule,
+    setDisabledAreas as apiSetDisabledAreas,
     autoPlan,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -40,16 +42,21 @@ export default function SetupPage() {
     const [persons, setPersons] = useState([]);
     const [configs, setConfigs] = useState({}); // line -> {enabled, priority, run_count}
     const [absentIds, setAbsentIds] = useState(new Set());
+    const [areas, setAreas] = useState([]);
+    const [disabledAreas, setDisabledAreas] = useState(new Set());
+    const [scheduleExists, setScheduleExists] = useState(false);
+    const [applyingAreas, setApplyingAreas] = useState(false);
     const [search, setSearch] = useState("");
     const [loading, setLoading] = useState(false);
     const [generating, setGenerating] = useState(false);
 
     useEffect(() => {
         setLoading(true);
-        Promise.all([fetchLines(), fetchPersons()])
-            .then(([linesData, personsData]) => {
+        Promise.all([fetchLines(), fetchPersons(), fetchAreas()])
+            .then(([linesData, personsData, areasData]) => {
                 setLines(linesData.lines || []);
                 setPersons(personsData || []);
+                setAreas(areasData.areas || []);
                 const init = {};
                 (linesData.lines || []).forEach((l, idx) => {
                     const isSpares = l.line.toLowerCase() === "spares";
@@ -69,6 +76,7 @@ export default function SetupPage() {
         if (!date) return;
         fetchSchedule(date, shift).then((sched) => {
             if (sched) {
+                setScheduleExists(true);
                 const cfgMap = {};
                 (sched.line_configs || []).forEach((c) => {
                     cfgMap[c.line] = {
@@ -84,9 +92,12 @@ export default function SetupPage() {
                     return next;
                 });
                 setAbsentIds(new Set(sched.absent_person_ids || []));
+                setDisabledAreas(new Set(sched.disabled_row_names || []));
             } else {
+                setScheduleExists(false);
                 // Fresh date — reset absentees so yesterday's list doesn't carry over
                 setAbsentIds(new Set());
+                setDisabledAreas(new Set());
             }
         });
     }, [date, shift]);
@@ -114,6 +125,26 @@ export default function SetupPage() {
 
     const availableCount = persons.length - absentIds.size;
 
+    const toggleArea = async (area) => {
+        const next = new Set(disabledAreas);
+        if (next.has(area)) next.delete(area); else next.add(area);
+        setDisabledAreas(next);
+        // If a schedule already exists for this date, apply the change immediately mid-day
+        if (scheduleExists) {
+            setApplyingAreas(true);
+            try {
+                await apiSetDisabledAreas(date, { shift, disabled_row_names: Array.from(next) });
+                toast.success(next.has(area) ? `${area.toUpperCase()} deselected — cells freed` : `${area.toUpperCase()} re-enabled`);
+            } catch (e) {
+                toast.error(e.response?.data?.detail || e.message);
+                // Revert
+                setDisabledAreas(disabledAreas);
+            } finally {
+                setApplyingAreas(false);
+            }
+        }
+    };
+
     const handleGenerate = async () => {
         const line_configs = activeLines.map(([line, c]) => ({
             line,
@@ -133,6 +164,7 @@ export default function SetupPage() {
                 absent_person_ids: Array.from(absentIds),
                 overrides: {},
                 unassigned_keys: [],
+                disabled_row_names: Array.from(disabledAreas),
             });
             toast.success("Schedule generated");
             navigate(`/board?date=${date}&shift=${shift}`);
@@ -318,10 +350,73 @@ export default function SetupPage() {
                             })
                         )}
                     </div>
+
+                    <div className="mt-6">
+                        <SectionTitle index="C" title="Areas To Run" />
+                        <div className="border border-white/10 bg-[#111]" data-testid="areas-section">
+                            <div className="px-4 py-2 border-b border-white/10 flex flex-wrap items-center justify-between gap-2">
+                                <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                                    Deselect any area · applies {scheduleExists ? "immediately" : "on generate"}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[10px] uppercase tracking-widest text-zinc-400" data-testid="areas-count">
+                                        {areas.length - disabledAreas.size}/{areas.length} on
+                                    </span>
+                                    {disabledAreas.size > 0 && (
+                                        <button
+                                            type="button"
+                                            onClick={async () => {
+                                                if (scheduleExists) {
+                                                    setApplyingAreas(true);
+                                                    try {
+                                                        await apiSetDisabledAreas(date, { shift, disabled_row_names: [] });
+                                                        toast.success("All areas re-enabled");
+                                                    } catch (e) {
+                                                        toast.error(e.response?.data?.detail || e.message);
+                                                        return;
+                                                    } finally {
+                                                        setApplyingAreas(false);
+                                                    }
+                                                }
+                                                setDisabledAreas(new Set());
+                                            }}
+                                            data-testid="areas-reset-all"
+                                            className="text-[10px] uppercase tracking-widest text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 px-2 py-1"
+                                        >
+                                            Enable all
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-px bg-white/5">
+                                {areas.map((a) => {
+                                    const enabled = !disabledAreas.has(a);
+                                    return (
+                                        <label
+                                            key={a}
+                                            className={`flex items-center gap-2 px-3 py-2 cursor-pointer bg-[#0f0f0f] ${
+                                                enabled ? "text-white" : "text-zinc-500"
+                                            } ${applyingAreas ? "opacity-60" : ""}`}
+                                            data-testid={`area-row-${a}`}
+                                        >
+                                            <Checkbox
+                                                checked={enabled}
+                                                onCheckedChange={() => toggleArea(a)}
+                                                disabled={applyingAreas}
+                                                data-testid={`area-checkbox-${a}`}
+                                                className="border-white/20 data-[state=checked]:bg-[#3B6AB8] data-[state=checked]:border-[#3B6AB8] rounded-none"
+                                            />
+                                            <span className={`text-sm font-semibold uppercase tracking-wide ${enabled ? "" : "line-through"}`}>{a}</span>
+                                        </label>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
                 </section>
 
                 <section>
-                    <SectionTitle index="C" title="Mark Absent" />
+                    <SectionTitle index="D" title="Mark Absent" />
                     <div className="border border-white/10 bg-[#111]">
                         <div className="flex items-center gap-3 border-b border-white/10 p-3">
                             <Search className="w-4 h-4 text-zinc-500" />
