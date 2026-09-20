@@ -1,0 +1,25 @@
+{
+  "summary": "Iter21 fully verified — data-management features working end-to-end. BACKEND (9/9 pytest passing in /app/backend/tests/test_iter21.py): (1) history field no longer exposed in Schedule response after mutations (fill-shortages) — returns None/[]. (2) POST /api/schedule/{date}/restore correctly replaces state: after close-line adds X-Smart to closed_line_keys, posting the pre-close snapshot removes it. (3) Malformed snapshot missing `assignments` or `line_configs` → 400. (4) Restore on non-existent date → 404. (5) DELETE /api/schedules/month/2026-02?archived=false removes only active docs; response body has {deleted, month, archived}. (6) Bad month format ('2026-2', 'badstring') → 400. (7) GET /api/schedules?archived=false / ?archived=true correctly filter (seeded via direct mongo update). (8) DELETE .../month?archived=true only deletes archived docs, active survives. (9) Called _auto_archive_and_purge() and _purge_stale_setups() directly: 100-day-old active doc gets archived=true; 400-day-old archived doc is purged; 24h+ unlogged draft is deleted. FRONTEND: /history desktop 1920x1000 — history-tab-active and history-tab-archived both visible; clicking Archived shows history-archived-banner (amber). Hidden delete-month button has opacity=0 initially, transitions to opacity=1 on mouse hover of the .group month bar. Clicking it triggers window.confirm with correct record-count message (verified 'Delete ALL 1 record(s) for September 2026?'). Mobile 400x800: neither tab buttons nor the delete-month icon are visible (confirmed 3× visibility=False). /board?date=…&shift=day: undo-btn present, undo-count badge absent initially; performing a mutation via UI would set the badge (validated in iter20). After page reload, undo-count badge remains absent — confirming the undoStack is React session state (not persisted). Direct GET on schedule after reload confirms backend never received a `history` field on the doc.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter21.py",
+    "/app/test_reports/pytest/pytest_iter21.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py line 496: `doc[\"history\"] = existing.get(\"history\") or []` still writes an empty `history` array to newly-generated schedule docs. It's stripped from responses via Schedule model `extra=ignore`, but it lingers in mongo. Consider `unset`-ing or simply not writing it if not present, to remove the last residue of the legacy field.",
+    "server.py housekeeping runs only on startup — if the pod stays up for weeks, auto-archive/purge/stale-cleanup never fires. Consider scheduling via a background task (APScheduler / asyncio.create_task with sleep) so it also runs periodically.",
+    "_purge_stale_setups matches only docs where logged_at is explicitly null (`{\"logged_at\": None}`). Existing legacy docs without a `logged_at` field would be missed — safer query: `{\"$or\": [{\"logged_at\": None}, {\"logged_at\": {\"$exists\": False}}]}`.",
+    "HistoryPage handleDeleteMonth calls window.confirm — replace with a shadcn AlertDialog for consistent UX with the rest of the app (Toast is used elsewhere via Sonner).",
+    "BoardPage.jsx captureSnapshot duplicates the shape now used server-side in _undoable_snapshot — worth extracting the shape to /lib/schedule-snapshot.js and importing from both places (drift risk if fields grow)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter21.py"],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "100%"},
+  "test_credentials": "N/A",
+  "seed_data_creation": "Backend test schedules 2026-02-{10,11,15,20,21,22,23,28}, 2026-03-{02,03}; all deleted in fixture teardowns and explicit cleanups. Also seeded 3 housekeeping-test docs (dated -100/-400/-1 days) that were removed inside the test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter21 removes server-side undo persistence: undo lives entirely in React state (BoardPage.undoStack, max 5, cleared on date/shift change and page reload). Backend exposes POST /api/schedule/{date}/restore taking {shift, snapshot}. The Schedule pydantic model has no `history` field, so responses drop it even if mongo still writes an empty array (see code-review note). New endpoints: DELETE /api/schedules/month/{YYYY-MM}?archived=<bool>, GET /api/schedules?archived=<bool>. Startup housekeeping: _auto_archive_and_purge (90-day archive, 365-day purge), _purge_stale_setups (24h unlogged). HistoryPage hidden delete-month uses opacity-0 group-hover:opacity-100 on the .group parent — hover the month title area, NOT the button, to reveal it in tests.",
+  "rca of the issue": "N/A"
+}

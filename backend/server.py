@@ -483,20 +483,26 @@ async def generate_schedule(req: ScheduleRequest):
         total_required=total_req, total_assigned=total_assigned, total_shortage=total_short,
     )
     doc = sched.model_dump()
+    # Strip the legacy `history` field entirely — undo now lives client-side.
+    doc.pop("history", None)
     # Preserve implicit server-side state across regenerations so mutating callers
-    # (adjust, late-arrival, etc.) don't accidentally wipe closures / undo history.
+    # (adjust, late-arrival, etc.) don't accidentally wipe closures.
     existing = await db.schedules.find_one(
         {"date": req.date, "shift": req.shift},
-        {"_id": 0, "logged_at": 1, "history": 1, "closures": 1, "closed_line_keys": 1},
+        {"_id": 0, "logged_at": 1, "closures": 1, "closed_line_keys": 1},
     )
     if existing:
         if existing.get("logged_at"):
             doc["logged_at"] = existing["logged_at"]
             sched.logged_at = existing["logged_at"]
-        doc["history"] = existing.get("history") or []
         doc["closures"] = existing.get("closures") or []
         doc["closed_line_keys"] = existing.get("closed_line_keys") or []
     await db.schedules.replace_one({"date": req.date, "shift": req.shift}, doc, upsert=True)
+    # Clean up any residual `history` field on the doc so old records don't linger.
+    await db.schedules.update_one(
+        {"date": req.date, "shift": req.shift},
+        {"$unset": {"history": ""}},
+    )
     return sched
 
 
@@ -2078,6 +2084,8 @@ async def _auto_archive_and_purge():
         {"$set": {"archived": True, "archived_at": datetime.now(timezone.utc).isoformat()}},
     )
     r2 = await db.schedules.delete_many({"archived": True, "date": {"$lt": purge_cutoff}})
+    # Drop any residual `history` field written by the legacy DB-backed undo stack.
+    await db.schedules.update_many({"history": {"$exists": True}}, {"$unset": {"history": ""}})
     if r1.modified_count or r2.deleted_count:
         logger.info(f"housekeeping: archived {r1.modified_count} · purged {r2.deleted_count} very-old records")
 
@@ -2088,7 +2096,10 @@ async def _purge_stale_setups():
     from datetime import timedelta
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     r = await db.schedules.delete_many({
-        "logged_at": None,
+        "$or": [
+            {"logged_at": None},
+            {"logged_at": {"$exists": False}},
+        ],
         "created_at": {"$lt": cutoff},
     })
     if r.deleted_count:
