@@ -260,7 +260,26 @@ async def upload_excel(file: UploadFile = File(...), confirm: bool = False):
         )
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(400, "Only .xlsx/.xls files supported")
-    content = await file.read()
+
+    # Enforce a hard size cap before we spend memory parsing. Configurable via env
+    # (bytes); defaults to 5 MB which is more than enough for a factory roster.
+    max_bytes = int(os.environ.get("MAX_UPLOAD_BYTES", str(5 * 1024 * 1024)))
+    chunk_size = 1 << 20  # 1 MB
+    buf = io.BytesIO()
+    total = 0
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                413,
+                f"File too large. Max allowed is {max_bytes // (1024 * 1024)} MB.",
+            )
+        buf.write(chunk)
+    content = buf.getvalue()
+
     try:
         persons, details = parse_excel_bytes(content)
     except Exception as e:
