@@ -151,7 +151,10 @@ const steps = [
         icon: Upload,
         body: [
             "When your skill matrix changes, go to Upload and pick the new .xlsx (keep both sheets: person - skill and assembly line — include a Row name column in the assembly line sheet).",
-            "Uploading replaces the current persons + lines. Every associate is matched to their existing record by mobile number (falling back to serial number), so their ID is preserved — historical absences, closures, late arrivals and analytics stay linked to the same person. New associates get fresh IDs; anyone missing from the new file is removed.",
+            "Ensure every row is complete BEFORE uploading — name, surname, date of joining, employee type, mobile number, and every skill cell. Blank rows or missing fields can prevent an associate from being matched to their existing record.",
+            "Mobile numbers are the primary unique identifier. Once entered for an associate they MUST NEVER be changed — the app uses the mobile to preserve that person's ID across every re-upload so their history, absences, and analytics stay linked.",
+            "Uploading replaces the current roster. Each associate is matched to their existing record by (1) mobile number, then (2) first name + surname + date of joining if the mobile is blank. Serial numbers are NOT used for matching — they're not stable across roster updates.",
+            "New associates get fresh IDs; anyone missing from the new file is removed.",
             "Names shown in reports are frozen at the time each record was written, so historical Analytics and Absenteeism reports stay accurate even if a person is later renamed or removed from the roster.",
             "Existing schedules keep working but should be regenerated if line configuration changed.",
         ],

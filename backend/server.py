@@ -35,6 +35,7 @@ class Person(BaseModel):
     sn: Optional[int] = None
     name: str
     surname: Optional[str] = ""
+    date_of_joining: Optional[str] = ""     # ISO date string; used as a fallback match key
     qualification: Optional[str] = ""
     employee_type: Optional[str] = ""
     mobile: Optional[str] = ""
@@ -146,12 +147,29 @@ def _parse_persons_sheet(ws) -> List[Person]:
             sn=int(sn_v) if isinstance(sn_v, (int, float)) else None,
             name=str(name).strip(),
             surname=str(ws.cell(row=r, column=3).value or "").strip(),
+            date_of_joining=_coerce_date_str(ws.cell(row=r, column=4).value),
             qualification=str(ws.cell(row=r, column=5).value or "").strip(),
             employee_type=str(ws.cell(row=r, column=6).value or "").strip(),
             mobile=str(ws.cell(row=r, column=8).value or "").strip(),
             skills=skills,
         ))
     return persons
+
+
+def _coerce_date_str(v) -> str:
+    """Normalise an Excel date cell to an ISO YYYY-MM-DD string. Accepts either a
+    datetime (openpyxl coerces date-typed cells) or a plain string. Returns "" on
+    anything unparseable so it can't accidentally match blanks."""
+    if v is None or v == "":
+        return ""
+    if isinstance(v, datetime):
+        return v.date().isoformat()
+    try:
+        # Fallback: treat as string and pull out YYYY-MM-DD if present
+        s = str(v).strip()
+        return s[:10] if len(s) >= 10 else s
+    except Exception:
+        return ""
 
 
 def _coerce_int(v) -> int:
@@ -251,8 +269,9 @@ async def list_details():
 async def upload_excel(file: UploadFile = File(...), confirm: bool = False):
     """Replace the current persons + line_details roster with the contents of the uploaded Excel.
     Requires ?confirm=true to guard against accidental data loss — the client must explicitly opt in.
-    IDs of existing associates are preserved (matched by mobile or serial number) so historical
-    schedules, absences, late arrivals, closures, and analytics stay linked to the same person."""
+    IDs of existing associates are preserved so historical schedules, absences, late arrivals,
+    closures, and analytics stay linked to the same person. Matching order: (1) mobile number,
+    (2) first name + surname + date of joining. Serial numbers are NOT used."""
     if not confirm:
         raise HTTPException(
             400,
@@ -288,34 +307,29 @@ async def upload_excel(file: UploadFile = File(...), confirm: bool = False):
         raise HTTPException(400, "No data found")
 
     # Build fallback lookups so we can REUSE existing IDs across re-uploads. Order:
-    #   1. mobile number  (unique-ish, most stable)
-    #   2. serial number  (from the Excel `sn` column)
-    #   3. full-name + employee-type combo  (last-ditch match for people without a mobile)
-    # This prevents ID orphaning of every downstream record.
+    #   1. mobile number       (primary unique identifier — must never change)
+    #   2. first name + surname + date of joining  (fallback for associates without a mobile)
+    # Serial numbers are NOT used — they're not stable across roster updates.
     existing = await db.persons.find({}, {"_id": 0}).to_list(2000)
 
     def _norm(s: str) -> str:
         return (s or "").strip().lower()
 
-    def _name_key(name: str, surname: str, etype: str) -> str:
-        return f"{_norm(name)}|{_norm(surname)}|{_norm(etype)}"
+    def _identity_key(name: str, surname: str, doj: str) -> str:
+        return f"{_norm(name)}|{_norm(surname)}|{_norm(doj)}"
 
     by_mobile: Dict[str, str] = {}
-    by_sn: Dict[int, str] = {}
-    by_name_dept: Dict[str, str] = {}
+    by_identity: Dict[str, str] = {}
     for e in existing:
         mob = (e.get("mobile") or "").strip()
         if mob:
             by_mobile[mob] = e["id"]
-        sn = e.get("sn")
-        if isinstance(sn, int):
-            by_sn[sn] = e["id"]
-        nk = _name_key(e.get("name", ""), e.get("surname", ""), e.get("employee_type", ""))
-        # Only index when it's a full identifier — bare "name" alone is too ambiguous
-        if nk.replace("|", "").strip():
-            by_name_dept[nk] = e["id"]
+        ik = _identity_key(e.get("name", ""), e.get("surname", ""), e.get("date_of_joining", ""))
+        # Only index when name + DOJ are both present — bare "name" alone is too ambiguous
+        if _norm(e.get("name", "")) and _norm(e.get("date_of_joining", "")):
+            by_identity[ik] = e["id"]
 
-    reused_mobile = reused_sn = reused_name = 0
+    reused_mobile = reused_identity = 0
     for p in persons:
         prior_id = None
         mob = (p.mobile or "").strip()
@@ -323,20 +337,16 @@ async def upload_excel(file: UploadFile = File(...), confirm: bool = False):
             prior_id = by_mobile.get(mob)
             if prior_id:
                 reused_mobile += 1
-        if not prior_id and isinstance(p.sn, int):
-            prior_id = by_sn.get(p.sn)
-            if prior_id:
-                reused_sn += 1
         if not prior_id:
-            nk = _name_key(p.name, p.surname or "", p.employee_type or "")
-            if nk.replace("|", "").strip():
-                prior_id = by_name_dept.get(nk)
+            ik = _identity_key(p.name, p.surname or "", p.date_of_joining or "")
+            if _norm(p.name) and _norm(p.date_of_joining or ""):
+                prior_id = by_identity.get(ik)
                 if prior_id:
-                    reused_name += 1
+                    reused_identity += 1
         if prior_id:
             p.id = prior_id
 
-    reused = reused_mobile + reused_sn + reused_name
+    reused = reused_mobile + reused_identity
 
     # Replace via targeted upsert + orphan cleanup (no wildcard delete_many).
     from pymongo import ReplaceOne
@@ -371,7 +381,7 @@ async def upload_excel(file: UploadFile = File(...), confirm: bool = False):
         "persons": len(persons),
         "details": len(details),
         "ids_reused": reused,
-        "ids_reused_by": {"mobile": reused_mobile, "sn": reused_sn, "name": reused_name},
+        "ids_reused_by": {"mobile": reused_mobile, "identity": reused_identity},
         "ids_new": len(persons) - reused,
         "removed_persons": removed_persons.deleted_count,
         "removed_details": removed_details.deleted_count,
