@@ -4,6 +4,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import io
+import re
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
@@ -90,7 +91,6 @@ class Schedule(BaseModel):
     unassigned_keys: List[str] = []
     required_overrides: Dict[str, int] = {}
     logged_at: Optional[str] = None
-    history: List[dict] = []                      # bounded undo stack (last 5 actions)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     total_required: int = 0
     total_assigned: int = 0
@@ -98,18 +98,19 @@ class Schedule(BaseModel):
     closures: List[dict] = []                     # [{line_key, line, closed_at, freed_count}]
     closed_line_keys: List[str] = []
     disabled_activities: Dict[str, List[str]] = {}   # line -> row_names deselected only for that line
-
-
-MAX_HISTORY = 5
+    archived: bool = False                        # true when auto-moved out of active history
 
 
 def _undoable_snapshot(sched_doc: dict, action: str) -> dict:
-    """Capture the subset of schedule fields needed to restore this state."""
+    """Capture the subset of schedule fields needed to restore this state.
+    Returned to the client so it can hold the undo stack in session storage
+    (never persisted server-side)."""
     return {
         "action": action,
         "snapshot_at": datetime.now(timezone.utc).isoformat(),
         "line_configs": [dict(c) for c in (sched_doc.get("line_configs") or [])],
         "absent_person_ids": list(sched_doc.get("absent_person_ids") or []),
+        "absent_persons": [dict(p) for p in (sched_doc.get("absent_persons") or [])],
         "overrides": dict(sched_doc.get("overrides") or {}),
         "unassigned_keys": list(sched_doc.get("unassigned_keys") or []),
         "required_overrides": dict(sched_doc.get("required_overrides") or {}),
@@ -121,15 +122,6 @@ def _undoable_snapshot(sched_doc: dict, action: str) -> dict:
         "total_assigned": sched_doc.get("total_assigned", 0),
         "total_shortage": sched_doc.get("total_shortage", 0),
     }
-
-
-async def _push_history(date: str, shift: str, sched_doc: dict, action: str) -> None:
-    """Append a snapshot of the CURRENT schedule state to history (bounded to MAX_HISTORY)."""
-    snap = _undoable_snapshot(sched_doc, action)
-    await db.schedules.update_one(
-        {"date": date, "shift": shift},
-        {"$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
-    )
 
 
 # ----------------- Excel parsing & seeding -----------------
@@ -860,13 +852,7 @@ async def fill_shortages(date: str, shift: str = "day", preview: bool = False):
         required_overrides=dict(sched_doc.get("required_overrides", {}) or {}),
         disabled_activities=sched_doc.get("disabled_activities", {}) or {},
     )
-    snap = _undoable_snapshot(sched_doc, "Fill all shortages")
-    result = await generate_schedule(req)
-    await db.schedules.update_one(
-        {"date": date, "shift": shift},
-        {"$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
-    )
-    return result
+    return await generate_schedule(req)
 
 
 @api_router.get("/schedule/{date}/suggest-replacement")
@@ -950,7 +936,6 @@ async def adjust_cell(date: str, payload: dict):
     sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
     if not sched_doc:
         raise HTTPException(404, "Schedule not found")
-    snap = _undoable_snapshot(sched_doc, f"Manual edit · {cell_key}")
     overrides = sched_doc.get("overrides", {}) or {}
     unassigned = set(sched_doc.get("unassigned_keys", []) or [])
     required_overrides = dict(sched_doc.get("required_overrides", {}) or {})
@@ -972,12 +957,7 @@ async def adjust_cell(date: str, payload: dict):
         required_overrides=required_overrides,
         disabled_activities=sched_doc.get("disabled_activities", {}) or {},
     )
-    result = await generate_schedule(req)
-    await db.schedules.update_one(
-        {"date": date, "shift": shift},
-        {"$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
-    )
-    return result
+    return await generate_schedule(req)
 
 
 @api_router.post("/schedule/{date}/late-arrival")
@@ -1047,9 +1027,7 @@ async def late_arrival(date: str, payload: dict):
     if not target:
         return {"person": {"id": pid, "name": _person_full_name(person)}, **build_options()}
 
-    # --- Mutation path: snapshot then assign ---
-    snap = _undoable_snapshot(sched_doc, f"Late arrival · {_person_full_name(person)}")
-
+    # --- Mutation path ---
     # Remove from absent
     absent = [a for a in sched_doc["absent_person_ids"] if a != pid]
 
@@ -1139,11 +1117,6 @@ async def late_arrival(date: str, payload: dict):
         disabled_activities=sched_doc.get("disabled_activities", {}) or {},
     )
     new_sched = await generate_schedule(req)
-    # Push snapshot onto the undo stack (bounded to MAX_HISTORY)
-    await db.schedules.update_one(
-        {"date": date, "shift": shift},
-        {"$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
-    )
     return {
         "schedule": new_sched.model_dump(),
         "displaced": displaced_options,
@@ -1151,22 +1124,28 @@ async def late_arrival(date: str, payload: dict):
     }
 
 
-@api_router.post("/schedule/{date}/undo", response_model=Schedule)
-async def undo_last_action(date: str, shift: str = "day"):
-    """Undo the most recent mutating action. Steps back through up to MAX_HISTORY
-    snapshots one at a time (fully restores the schedule doc to the popped state)."""
-    sched_doc = await db.schedules.find_one({"date": date, "shift": shift}, {"_id": 0})
+class RestoreRequest(BaseModel):
+    shift: str = "day"
+    snapshot: dict
+
+
+@api_router.post("/schedule/{date}/restore", response_model=Schedule)
+async def restore_snapshot(date: str, req: RestoreRequest):
+    """Client-driven undo: the frontend keeps the undo stack in session storage,
+    pops the last snapshot on Undo and posts it here to replace the schedule state.
+    Nothing about the stack is persisted server-side."""
+    sched_doc = await db.schedules.find_one({"date": date, "shift": req.shift}, {"_id": 0})
     if not sched_doc:
         raise HTTPException(404, "Schedule not found")
-    history = list(sched_doc.get("history") or [])
-    if not history:
-        raise HTTPException(400, "Nothing to undo")
-    snap = history.pop()  # most recent
+    snap = req.snapshot or {}
+    if "assignments" not in snap or "line_configs" not in snap:
+        raise HTTPException(400, "Malformed snapshot")
     await db.schedules.update_one(
-        {"date": date, "shift": shift},
+        {"date": date, "shift": req.shift},
         {"$set": {
             "line_configs": snap.get("line_configs", []),
             "absent_person_ids": snap.get("absent_person_ids", []),
+            "absent_persons": snap.get("absent_persons", []),
             "overrides": snap.get("overrides", {}),
             "unassigned_keys": snap.get("unassigned_keys", []),
             "required_overrides": snap.get("required_overrides", {}),
@@ -1177,10 +1156,9 @@ async def undo_last_action(date: str, shift: str = "day"):
             "total_required": snap.get("total_required", 0),
             "total_assigned": snap.get("total_assigned", 0),
             "total_shortage": snap.get("total_shortage", 0),
-            "history": history,
         }},
     )
-    return await _get_schedule_doc(date, shift)
+    return await _get_schedule_doc(date, req.shift)
 
 
 @api_router.post("/schedule/{date}/mark-absent")
@@ -1197,7 +1175,6 @@ async def mark_absent_from_board(date: str, payload: dict):
 
     persons = await db.persons.find({"id": person_id}, {"_id": 0, "name": 1, "surname": 1}).to_list(1)
     person_label = _person_full_name(persons[0]) if persons else person_id
-    snap = _undoable_snapshot(sched_doc, f"Mark absent · {person_label}")
 
     absent = list(sched_doc.get("absent_person_ids", []) or [])
     if person_id not in absent:
@@ -1227,12 +1204,7 @@ async def mark_absent_from_board(date: str, payload: dict):
         required_overrides=required_overrides,
         disabled_activities=sched_doc.get("disabled_activities", {}) or {},
     )
-    result = await generate_schedule(req)
-    await db.schedules.update_one(
-        {"date": date, "shift": shift},
-        {"$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
-    )
-    return result
+    return await generate_schedule(req)
 
 
 class SetDisabledActivitiesRequest(BaseModel):
@@ -1258,7 +1230,6 @@ async def set_disabled_activities(date: str, req: SetDisabledActivitiesRequest):
     sched = await db.schedules.find_one({"date": date, "shift": req.shift}, {"_id": 0})
     if not sched:
         raise HTTPException(404, "Schedule not found")
-    snap = _undoable_snapshot(sched, "Activity change")
     details = await db.line_details.find({}, {"_id": 0}).to_list(1000)
     req_per_detail = {(d["line"], d["detail"]): int(d.get("persons_required", 0)) for d in details}
 
@@ -1321,8 +1292,7 @@ async def set_disabled_activities(date: str, req: SetDisabledActivitiesRequest):
             "total_required": total_required,
             "total_assigned": total_assigned,
             "total_shortage": total_shortage,
-        },
-         "$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
+        }},
     )
     return await _get_schedule_doc(date, req.shift)
 
@@ -1367,7 +1337,6 @@ async def close_line(date: str, req: CloseLineRequest):
     line_cells = [a for a in sched["assignments"] if a["line_key"] == req.line_key]
     if not line_cells:
         raise HTTPException(404, f"Line '{req.line_key}' not found in schedule")
-    snap = _undoable_snapshot(sched, f"Close line · {req.line_key}")
 
     freed_count = 0
     freed_persons: List[dict] = []  # snapshot [{id, name}] of everyone we freed
@@ -1431,8 +1400,7 @@ async def close_line(date: str, req: CloseLineRequest):
             "total_shortage": total_shortage,
             "total_assigned": total_assigned,
             "total_required": total_required,
-        },
-         "$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
+        }},
     )
     return await _get_schedule_doc(date, req.shift)
 
@@ -1455,7 +1423,6 @@ async def reopen_line(date: str, req: ReopenLineRequest):
     closed_keys = list(sched.get("closed_line_keys") or [])
     if req.line_key not in closed_keys:
         raise HTTPException(400, f"Line '{req.line_key}' is not closed")
-    pre_snap = _undoable_snapshot(sched, f"Reopen line · {req.line_key}")
 
     # Find the most recent closure for this line_key
     closure = None
@@ -1527,8 +1494,7 @@ async def reopen_line(date: str, req: ReopenLineRequest):
             "total_required": total_required,
             "total_assigned": total_assigned,
             "total_shortage": total_shortage,
-        },
-         "$push": {"history": {"$each": [pre_snap], "$slice": -MAX_HISTORY}}},
+        }},
     )
     return await _get_schedule_doc(date, req.shift)
 
@@ -1617,7 +1583,6 @@ async def start_line(date: str, req: StartLineRequest):
     }
     if req.line in running_base_lines:
         raise HTTPException(400, f"Line '{req.line}' is already running today")
-    snap = _undoable_snapshot(sched, f"Start line · {req.line}")
 
     # Re-activating a previously fully-closed line: drop its old cells, closure records,
     # closed_line_keys entries, and any stale line_configs so we can re-seed fresh below.
@@ -1696,8 +1661,7 @@ async def start_line(date: str, req: StartLineRequest):
             "total_required": total_required,
             "total_assigned": total_assigned,
             "total_shortage": total_shortage,
-        },
-         "$push": {"history": {"$each": [snap], "$slice": -MAX_HISTORY}}},
+        }},
     )
     return await _get_schedule_doc(date, req.shift)
 
@@ -1798,8 +1762,14 @@ async def get_schedule(date: str, shift: str = "day"):
 
 
 @api_router.get("/schedules")
-async def list_schedules():
-    docs = await db.schedules.find({}, {"_id": 0, "assignments": 0}).sort("date", -1).to_list(500)
+async def list_schedules(archived: bool = False):
+    """List schedules. `archived=false` (default) returns only the last 3 months of
+    active history; `archived=true` returns everything auto-moved past that cutoff.
+    Archived records are kept up to 12 months from their original date."""
+    docs = await db.schedules.find(
+        {"archived": archived} if archived else {"$or": [{"archived": {"$exists": False}}, {"archived": False}]},
+        {"_id": 0, "assignments": 0, "history": 0},
+    ).sort("date", -1).to_list(500)
     return docs
 
 
@@ -1807,6 +1777,24 @@ async def list_schedules():
 async def delete_schedule(date: str, shift: str = "day"):
     r = await db.schedules.delete_one({"date": date, "shift": shift})
     return {"deleted": r.deleted_count}
+
+
+@api_router.delete("/schedules/month/{month}")
+async def delete_schedules_month(month: str, archived: bool = False):
+    """Delete every schedule (all shifts) inside the given month `YYYY-MM`.
+    Applies to the active or archived pool depending on ?archived= flag."""
+    if not re.match(r"^\d{4}-\d{2}$", month):
+        raise HTTPException(400, "month must be in YYYY-MM format")
+    date_prefix = f"^{re.escape(month)}-"
+    if archived:
+        q = {"date": {"$regex": date_prefix}, "archived": True}
+    else:
+        q = {
+            "date": {"$regex": date_prefix},
+            "$or": [{"archived": {"$exists": False}}, {"archived": False}],
+        }
+    r = await db.schedules.delete_many(q)
+    return {"deleted": r.deleted_count, "month": month, "archived": archived}
 
 
 @api_router.get("/analytics/shortage")
@@ -2072,8 +2060,39 @@ async def on_startup():
         await seed_from_file_if_empty()
         await _migrate_canonical_line_names()
         await _backfill_absent_persons()
+        await _auto_archive_and_purge()
+        await _purge_stale_setups()
     except Exception as e:
         logger.exception(f"Startup init failed: {e}")
+
+
+async def _auto_archive_and_purge():
+    """Housekeeping: records older than 3 months move from active to archived; archived
+    records older than 12 months are permanently deleted. Runs on every startup."""
+    from datetime import timedelta
+    today = datetime.now(timezone.utc).date()
+    archive_cutoff = (today - timedelta(days=90)).isoformat()
+    purge_cutoff = (today - timedelta(days=365)).isoformat()
+    r1 = await db.schedules.update_many(
+        {"date": {"$lt": archive_cutoff}, "$or": [{"archived": {"$exists": False}}, {"archived": False}]},
+        {"$set": {"archived": True, "archived_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    r2 = await db.schedules.delete_many({"archived": True, "date": {"$lt": purge_cutoff}})
+    if r1.modified_count or r2.deleted_count:
+        logger.info(f"housekeeping: archived {r1.modified_count} · purged {r2.deleted_count} very-old records")
+
+
+async def _purge_stale_setups():
+    """Delete incomplete shift setup sessions — schedules never logged AND created
+    more than 24h ago. Prevents drafts accumulating in the DB."""
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    r = await db.schedules.delete_many({
+        "logged_at": None,
+        "created_at": {"$lt": cutoff},
+    })
+    if r.deleted_count:
+        logger.info(f"housekeeping: purged {r.deleted_count} stale (unlogged >24h) schedules")
 
 
 async def _backfill_absent_persons():

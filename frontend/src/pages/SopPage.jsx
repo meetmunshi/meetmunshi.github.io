@@ -140,6 +140,8 @@ const steps = [
         body: [
             "Analytics: pick any month from the dropdown to see three panels — Top Absenteeism (associates ranked by absences with the exact dates), Lines Hit by Absence (which lines lost the most seats when someone was off), and Line Utilisation (total runs and days each line was scheduled). A 'Line Closures This Month' section lists every mid-shift closure with its date, time, and freed count.",
             "History (calendar): jump into any past day's board. Hover a day (desktop) or tap the trash icon (mobile) to delete an incorrect record — you'll be asked to confirm, and locked schedules show an extra warning. A ⏻N badge marks days where lines were closed.",
+            "Delete an entire month (desktop only): hover the month name in the History calendar and a small trash icon appears next to it. Click it, confirm the count, and every day/shift in that month is deleted in one step. This works on both the Active tab and the Archived Records tab (where it permanently removes archived rows). Not exposed on mobile to prevent accidental taps.",
+            "Active vs Archived (desktop only): History defaults to the last 3 months of Active records. Anything older auto-moves to an 'Archived Records' tab on the same page — same calendar, tinted amber, with a banner marking it archived. Archived records auto-purge 12 months from their original date. Incomplete shift setups that were never Logged are auto-deleted after 24h. All housekeeping runs automatically at server startup — no manual action needed.",
             "Heatmap: which Area × Line pairs are fragile — pick trainees for cross-skilling.",
         ],
     },
@@ -161,7 +163,7 @@ const glossary = [
     { term: "Assigned / Free / Absent", def: "Assigned = on a cell. Free = in the Unassigned pool. Absent = marked off today." },
     { term: "Fill All Shortages", def: "Explores every skill-valid reshuffle and shows a preview of the best arrangement — you Confirm or Cancel." },
     { term: "Late Arrival", def: "Bring someone back from the Absent row into a cell. Auto-suggests the best fit and warns about conflicts." },
-    { term: "Undo", def: "Steps back through the last 5 mutating actions on the board (manual edits, fill shortages, mark absent, late arrival, close/reopen line, activity toggles, start line). The counter shows how many steps are stacked." },
+    { term: "Undo", def: "Steps back through the last 5 mutating actions on the board (manual edits, fill shortages, mark absent, late arrival, close/reopen line, start line). The counter shows how many steps are stacked. Undo history lives in this browser session only — it resets when you leave the day, reload the page, or close the tab; nothing about it is stored in the database." },
     { term: "Search & Filter (Board)", def: "Search by name; filter by Skill or Line. Matches glow yellow, everything else dims." },
     { term: "Priority", def: "Lines with lower numbers grab specialists first when the workforce is tight." },
     { term: "Run count", def: "If a line runs 2× today, a second column '<line> #2' is created. Analytics counts total runs per line for the month." },

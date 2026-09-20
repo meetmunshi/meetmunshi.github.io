@@ -13,7 +13,7 @@ import {
     logSchedule,
     suggestReplacement,
     lateArrival,
-    undoLateArrival,
+    restoreSnapshot,
     closeLine,
     reopenLine,
     suggestLineToStart,
@@ -91,7 +91,40 @@ export default function BoardPage() {
     const clearFilters = () => setFilters({ q: "", skill: "", line: "" });
     const [lineSuggest, setLineSuggest] = useState(null); // { unassigned_pool_size, suggestions[] } | null
     const [startingLine, setStartingLine] = useState(null); // line name being started
+    // Session-only undo stack (max 5) — resets on date/shift change + on tab reload.
+    // Nothing persisted to DB.
+    const MAX_UNDO = 5;
+    const [undoStack, setUndoStack] = useState([]);
     const boardRef = useRef(null);
+
+    // Capture the SNAPSHOTTABLE subset of the current schedule so we can restore it later.
+    const captureSnapshot = (action) => {
+        if (!schedule) return null;
+        return {
+            action,
+            snapshot_at: new Date().toISOString(),
+            line_configs: schedule.line_configs || [],
+            absent_person_ids: schedule.absent_person_ids || [],
+            absent_persons: schedule.absent_persons || [],
+            overrides: schedule.overrides || {},
+            unassigned_keys: schedule.unassigned_keys || [],
+            required_overrides: schedule.required_overrides || {},
+            assignments: schedule.assignments || [],
+            closures: schedule.closures || [],
+            closed_line_keys: schedule.closed_line_keys || [],
+            disabled_activities: schedule.disabled_activities || {},
+            total_required: schedule.total_required || 0,
+            total_assigned: schedule.total_assigned || 0,
+            total_shortage: schedule.total_shortage || 0,
+        };
+    };
+
+    // Push a snapshot onto the undo stack (bounded to MAX_UNDO).
+    const pushUndo = (action) => {
+        const snap = captureSnapshot(action);
+        if (!snap) return;
+        setUndoStack((prev) => [...prev, snap].slice(-MAX_UNDO));
+    };
 
     const setTv = (on) => {
         const p = { date, shift };
@@ -106,6 +139,9 @@ export default function BoardPage() {
             .finally(() => setLoading(false));
     };
     useEffect(load, [date, shift]);
+
+    // Reset session-only undo stack whenever the manager navigates to a new day/shift.
+    useEffect(() => { setUndoStack([]); }, [date, shift]);
 
     // "Updated N ago" ticker
     useEffect(() => {
@@ -360,10 +396,12 @@ export default function BoardPage() {
     const savePicks = async (picks, requiredOverride) => {
         const cell = editCell?.current;
         if (!cell) return;
+        const cellKey = `${cell.row_name}||${cell.line_key}||${cell.detail}`;
         try {
+            pushUndo(`Manual edit · ${cellKey}`);
             await adjustCell(date, {
                 shift,
-                cell_key: `${cell.row_name}||${cell.line_key}||${cell.detail}`,
+                cell_key: cellKey,
                 action: "set",
                 person_ids: picks,
                 required: requiredOverride,
@@ -379,10 +417,12 @@ export default function BoardPage() {
     const clearCell = async () => {
         const cell = editCell?.current;
         if (!cell) return;
+        const cellKey = `${cell.row_name}||${cell.line_key}||${cell.detail}`;
         try {
+            pushUndo(`Clear cell · ${cellKey}`);
             await adjustCell(date, {
                 shift,
-                cell_key: `${cell.row_name}||${cell.line_key}||${cell.detail}`,
+                cell_key: cellKey,
                 action: "clear",
             });
             toast.success("Cleared");
@@ -396,6 +436,7 @@ export default function BoardPage() {
     const handleQuickAbsent = async (personId, name) => {
         if (!window.confirm(`Mark ${name} absent for today?\nThey'll be removed from their cells but the rest of the schedule stays.`)) return;
         try {
+            pushUndo(`Mark absent · ${name}`);
             await markAbsentFromBoard(date, { shift, person_id: personId });
             toast.success(`${name} marked absent`);
             load();
@@ -406,6 +447,7 @@ export default function BoardPage() {
 
     const handleReopenLine = async (lineKey) => {
         try {
+            pushUndo(`Reopen line · ${lineKey}`);
             await reopenLine(date, { shift, line_key: lineKey });
             toast.success(`${lineKey} reopened · associates restored`);
             load();
@@ -417,6 +459,7 @@ export default function BoardPage() {
     const handleCloseLine = async (lineKey) => {
         if (!window.confirm(`Close the ${lineKey} line?\nAll associates currently on this line will move to the Unassigned pool. Other lines are not touched. This action is logged.`)) return;
         try {
+            pushUndo(`Close line · ${lineKey}`);
             const r = await closeLine(date, { shift, line_key: lineKey });
             const freed = r.closures?.[r.closures.length - 1]?.freed_count || 0;
             toast.success(`${lineKey} closed · ${freed} associates freed`, {
@@ -448,6 +491,7 @@ export default function BoardPage() {
     const handleStartLine = async (lineName) => {
         setStartingLine(lineName);
         try {
+            pushUndo(`Start line · ${lineName}`);
             const r = await startLine(date, { shift, line: lineName, priority: 3, run_count: 1 });
             const assigned = r.assignments.filter(a => a.line === lineName).reduce((s, a) => s + a.assigned_person_ids.length, 0);
             const required = r.assignments.filter(a => a.line === lineName).reduce((s, a) => s + a.required, 0);
@@ -473,6 +517,7 @@ export default function BoardPage() {
     const assignLateArrival = async (opt) => {
         if (!lateArr) return;
         try {
+            pushUndo(`Late arrival · ${lateArr.person.name || lateArr.person.id}`);
             const r = await lateArrival(date, {
                 shift,
                 person_id: lateArr.person.id,
@@ -520,15 +565,15 @@ export default function BoardPage() {
     };
 
     const doUndo = async () => {
-        const history = schedule?.history || [];
-        if (history.length === 0) {
+        if (undoStack.length === 0) {
             toast.info("Nothing to undo");
             return;
         }
-        const last = history[history.length - 1];
+        const snap = undoStack[undoStack.length - 1];
         try {
-            await undoLateArrival(date, shift);
-            toast.success(`Undone: ${last?.action || "last action"}`);
+            await restoreSnapshot(date, shift, snap);
+            setUndoStack((prev) => prev.slice(0, -1));
+            toast.success(`Undone: ${snap.action || "last action"}`);
             load();
         } catch (e) {
             toast.error(e.response?.data?.detail || e.message);
@@ -589,23 +634,23 @@ export default function BoardPage() {
                     <Button
                         variant="outline"
                         onClick={doUndo}
-                        disabled={(schedule?.history?.length || 0) === 0}
+                        disabled={undoStack.length === 0}
                         data-testid="undo-btn"
                         title={
-                            schedule?.history?.length
-                                ? `Undo last action (${schedule.history[schedule.history.length - 1]?.action || ""}) · ${schedule.history.length} step${schedule.history.length > 1 ? "s" : ""} available`
-                                : "Nothing to undo"
+                            undoStack.length
+                                ? `Undo last action (${undoStack[undoStack.length - 1]?.action || ""}) · ${undoStack.length} step${undoStack.length > 1 ? "s" : ""} available in this session`
+                                : "Nothing to undo · undo history resets when you leave this day or reload"
                         }
                         className="rounded-none border-white/15 text-white bg-transparent hover:bg-white/10 uppercase tracking-widest text-xs disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                         <Undo2 className="w-4 h-4 mr-2" />
                         Undo
-                        {(schedule?.history?.length || 0) > 0 && (
+                        {undoStack.length > 0 && (
                             <span
                                 data-testid="undo-count"
                                 className="ml-2 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 bg-white/15 text-[10px] font-mono-ibm"
                             >
-                                {schedule.history.length}
+                                {undoStack.length}
                             </span>
                         )}
                     </Button>
@@ -1729,6 +1774,7 @@ export default function BoardPage() {
                             onClick={async () => {
                                 setFillApplying(true);
                                 try {
+                                    pushUndo("Fill all shortages");
                                     const r = await fillShortages(date, shift);
                                     const filled = (fillPreview?.initial_shortage || 0) - (r.total_shortage || 0);
                                     if (filled > 0) toast.success(`Filled ${filled} of ${fillPreview.initial_shortage} shortages`);

@@ -10,9 +10,12 @@ export const fetchDetails = () => api.get("/details").then((r) => r.data);
 export const fetchStats = () => api.get("/stats").then((r) => r.data);
 export const fetchSchedule = (date, shift = "day") =>
     api.get(`/schedule/${date}`, { params: { shift } }).then((r) => r.data);
-export const fetchSchedules = () => api.get("/schedules").then((r) => r.data);
+export const fetchSchedules = (archived = false) =>
+    api.get("/schedules", { params: { archived } }).then((r) => r.data);
 export const deleteSchedule = (date, shift = "day") =>
     api.delete(`/schedule/${date}`, { params: { shift } }).then((r) => r.data);
+export const deleteSchedulesMonth = (month, archived = false) =>
+    api.delete(`/schedules/month/${month}`, { params: { archived } }).then((r) => r.data);
 export const generateSchedule = (payload) =>
     api.post("/schedule", payload).then((r) => r.data);
 export const adjustCell = (date, payload) =>
@@ -27,8 +30,8 @@ export const suggestReplacement = (date, cellKey, shift = "day", top = 3) =>
     api.get(`/schedule/${date}/suggest-replacement`, { params: { cell_key: cellKey, shift, top } }).then((r) => r.data);
 export const lateArrival = (date, payload) =>
     api.post(`/schedule/${date}/late-arrival`, payload).then((r) => r.data);
-export const undoLateArrival = (date, shift = "day") =>
-    api.post(`/schedule/${date}/undo`, null, { params: { shift } }).then((r) => r.data);
+export const restoreSnapshot = (date, shift, snapshot) =>
+    api.post(`/schedule/${date}/restore`, { shift, snapshot }).then((r) => r.data);
 export const fillShortages = (date, shift = "day") =>
     api.post(`/schedule/${date}/fill-shortages`, null, { params: { shift } }).then((r) => r.data);
 export const previewFillShortages = (date, shift = "day") =>

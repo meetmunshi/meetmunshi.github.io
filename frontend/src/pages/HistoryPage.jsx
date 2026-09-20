@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { fetchSchedules, absenteeismReportUrl, deleteSchedule } from "@/lib/api";
-import { ChevronLeft, ChevronRight, CalendarDays, Download, Lock, Trash2 } from "lucide-react";
+import { fetchSchedules, absenteeismReportUrl, deleteSchedule, deleteSchedulesMonth } from "@/lib/api";
+import { ChevronLeft, ChevronRight, CalendarDays, Download, Lock, Trash2, Archive } from "lucide-react";
 
 export default function HistoryPage() {
     const [items, setItems] = useState([]);
+    const [tab, setTab] = useState("active"); // 'active' | 'archived'
     const [month, setMonth] = useState(() => {
         const d = new Date();
         return { y: d.getFullYear(), m: d.getMonth() };
     });
 
-    const load = () => fetchSchedules().then(setItems);
-    useEffect(() => { load(); }, []);
+    const load = () => fetchSchedules(tab === "archived").then(setItems);
+    useEffect(() => { load(); }, [tab]);
 
     const handleDelete = async (date, shift, logged) => {
         const warn = logged
@@ -22,6 +23,31 @@ export default function HistoryPage() {
         try {
             await deleteSchedule(date, shift);
             toast.success(`Deleted ${date} · ${shift}`);
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || e.message);
+        }
+    };
+
+    const monthKey = `${month.y}-${String(month.m + 1).padStart(2, "0")}`;
+    const monthName = new Date(month.y, month.m, 1).toLocaleDateString("en-US", {
+        month: "long", year: "numeric",
+    });
+
+    const handleDeleteMonth = async () => {
+        const scope = tab === "archived" ? "archived" : "active";
+        const monthItems = items.filter((i) => (i.date || "").startsWith(monthKey));
+        if (monthItems.length === 0) {
+            toast.info(`No ${scope} records in ${monthName}`);
+            return;
+        }
+        const msg = tab === "archived"
+            ? `⚠ Permanently delete ALL ${monthItems.length} archived record(s) for ${monthName}?\n\nThis cannot be undone.`
+            : `Delete ALL ${monthItems.length} record(s) for ${monthName}?\n\nThis removes every day/shift in that month. This cannot be undone.`;
+        if (!window.confirm(msg)) return;
+        try {
+            const r = await deleteSchedulesMonth(monthKey, tab === "archived");
+            toast.success(`${monthName} · ${r.deleted} record(s) deleted`);
             load();
         } catch (e) {
             toast.error(e.response?.data?.detail || e.message);
@@ -39,22 +65,19 @@ export default function HistoryPage() {
 
     const daysInMonth = new Date(month.y, month.m + 1, 0).getDate();
     const firstDay = new Date(month.y, month.m, 1).getDay();
-    const monthName = new Date(month.y, month.m, 1).toLocaleDateString("en-US", {
-        month: "long", year: "numeric",
-    });
 
     const navMonth = (delta) => {
         const nd = new Date(month.y, month.m + delta, 1);
         setMonth({ y: nd.getFullYear(), m: nd.getMonth() });
     };
 
-    const monthStartISO = `${month.y}-${String(month.m + 1).padStart(2, "0")}-01`;
-    const monthEndISO = `${month.y}-${String(month.m + 1).padStart(2, "0")}-${String(daysInMonth).padStart(2, "0")}`;
+    const monthStartISO = `${monthKey}-01`;
+    const monthEndISO = `${monthKey}-${String(daysInMonth).padStart(2, "0")}`;
 
     const cells = [];
     for (let i = 0; i < firstDay; i++) cells.push(null);
     for (let d = 1; d <= daysInMonth; d++) {
-        const iso = `${month.y}-${String(month.m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        const iso = `${monthKey}-${String(d).padStart(2, "0")}`;
         cells.push({ d, iso, schedules: byDate[iso] || [] });
     }
 
@@ -83,8 +106,40 @@ export default function HistoryPage() {
                 </div>
             </header>
 
-            <div className="border border-white/10 bg-[#111]">
-                <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+            {/* Active / Archived toggle — desktop only. Kept fully hidden on mobile. */}
+            <div className="hidden md:flex items-center gap-2 mb-4">
+                <button
+                    onClick={() => setTab("active")}
+                    data-testid="history-tab-active"
+                    className={`uppercase tracking-widest text-xs font-bold px-4 py-2 border ${tab === "active" ? "bg-white text-black border-white" : "text-white/70 border-white/15 hover:bg-white/10"}`}
+                >
+                    Active · Last 3 Months
+                </button>
+                <button
+                    onClick={() => setTab("archived")}
+                    data-testid="history-tab-archived"
+                    className={`uppercase tracking-widest text-xs font-bold px-4 py-2 border flex items-center gap-2 ${tab === "archived" ? "bg-amber-500 text-black border-amber-500" : "text-amber-300/80 border-amber-500/30 hover:bg-amber-500/10"}`}
+                >
+                    <Archive className="w-3 h-3" /> Archived Records
+                </button>
+                {tab === "archived" && (
+                    <span className="text-[10px] uppercase tracking-widest text-zinc-500 ml-1">
+                        · Auto-purged after 12 months
+                    </span>
+                )}
+            </div>
+
+            <div className={`border ${tab === "archived" ? "border-amber-500/30" : "border-white/10"} bg-[#111]`}>
+                {tab === "archived" && (
+                    <div
+                        className="hidden md:block px-5 py-2 bg-amber-500/10 border-b border-amber-500/30 text-[10px] uppercase tracking-[0.25em] text-amber-300"
+                        data-testid="history-archived-banner"
+                    >
+                        Viewing archived records — moved out of active history after 3 months
+                    </div>
+                )}
+                {/* month bar wraps in a `group` so the hidden delete only appears on hover (desktop) */}
+                <div className="group flex items-center justify-between px-5 py-4 border-b border-white/10">
                     <button
                         onClick={() => navMonth(-1)}
                         data-testid="history-prev-month"
@@ -92,9 +147,23 @@ export default function HistoryPage() {
                     >
                         <ChevronLeft className="w-4 h-4" />
                     </button>
-                    <h2 className="font-chivo uppercase font-bold text-2xl tracking-tight">
-                        {monthName}
-                    </h2>
+                    <div className="flex items-center gap-2">
+                        <h2 className="font-chivo uppercase font-bold text-2xl tracking-tight">
+                            {monthName}
+                        </h2>
+                        {/* Hidden delete-month button. Desktop only, appears on hover of the month bar. */}
+                        <button
+                            onClick={handleDeleteMonth}
+                            data-testid="history-delete-month-btn"
+                            aria-label={`Delete all ${tab} records for ${monthName}`}
+                            title={tab === "archived"
+                                ? `Permanently delete all archived records for ${monthName}`
+                                : `Delete all records for ${monthName}`}
+                            className="hidden md:inline-flex items-center justify-center w-7 h-7 border border-red-500/30 text-red-300/70 hover:text-white hover:bg-red-500/20 hover:border-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                            <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
                     <button
                         onClick={() => navMonth(1)}
                         data-testid="history-next-month"
