@@ -149,7 +149,9 @@ const steps = [
         icon: Upload,
         body: [
             "When your skill matrix changes, go to Upload and pick the new .xlsx (keep both sheets: person - skill and assembly line — include a Row name column in the assembly line sheet).",
-            "Uploading replaces the current persons + lines. Existing schedules keep working but should be regenerated.",
+            "Uploading replaces the current persons + lines. Every associate is matched to their existing record by mobile number (falling back to serial number), so their ID is preserved — historical absences, closures, late arrivals and analytics stay linked to the same person. New associates get fresh IDs; anyone missing from the new file is removed.",
+            "Names shown in reports are frozen at the time each record was written, so historical Analytics and Absenteeism reports stay accurate even if a person is later renamed or removed from the roster.",
+            "Existing schedules keep working but should be regenerated if line configuration changed.",
         ],
     },
 ];

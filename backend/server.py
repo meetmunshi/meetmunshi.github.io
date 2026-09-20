@@ -84,6 +84,7 @@ class Schedule(BaseModel):
     shift: str = "day"
     line_configs: List[LineConfig]
     absent_person_ids: List[str]
+    absent_persons: List[dict] = []               # [{id, name}] snapshotted at write time
     assignments: List[CellAssignment]
     overrides: Dict[str, List[str]] = {}
     unassigned_keys: List[str] = []
@@ -256,7 +257,9 @@ async def list_details():
 @api_router.post("/upload-excel")
 async def upload_excel(file: UploadFile = File(...), confirm: bool = False):
     """Replace the current persons + line_details roster with the contents of the uploaded Excel.
-    Requires ?confirm=true to guard against accidental data loss — the client must explicitly opt in."""
+    Requires ?confirm=true to guard against accidental data loss — the client must explicitly opt in.
+    IDs of existing associates are preserved (matched by mobile or serial number) so historical
+    schedules, absences, late arrivals, closures, and analytics stay linked to the same person."""
     if not confirm:
         raise HTTPException(
             400,
@@ -271,11 +274,40 @@ async def upload_excel(file: UploadFile = File(...), confirm: bool = False):
         raise HTTPException(400, f"Failed to parse excel: {e}")
     if not persons or not details:
         raise HTTPException(400, "No data found")
+
+    # Build lookup of existing associates so we can REUSE their IDs when re-uploading
+    # (matching on mobile first, then on serial number). This prevents ID orphaning
+    # of every record that references a person_id.
+    existing = await db.persons.find({}, {"_id": 0}).to_list(2000)
+    by_mobile: Dict[str, str] = {}
+    by_sn: Dict[int, str] = {}
+    for e in existing:
+        mob = (e.get("mobile") or "").strip()
+        if mob:
+            by_mobile[mob] = e["id"]
+        sn = e.get("sn")
+        if isinstance(sn, int):
+            by_sn[sn] = e["id"]
+    reused = 0
+    for p in persons:
+        mob = (p.mobile or "").strip()
+        prior_id = by_mobile.get(mob) if mob else None
+        if not prior_id and isinstance(p.sn, int):
+            prior_id = by_sn.get(p.sn)
+        if prior_id:
+            p.id = prior_id
+            reused += 1
+
     await db.persons.delete_many({})
     await db.line_details.delete_many({})
     await db.persons.insert_many([p.model_dump() for p in persons])
     await db.line_details.insert_many([d.model_dump() for d in details])
-    return {"persons": len(persons), "details": len(details)}
+    return {
+        "persons": len(persons),
+        "details": len(details),
+        "ids_reused": reused,
+        "ids_new": len(persons) - reused,
+    }
 
 
 def _person_full_name(p: dict) -> str:
@@ -284,6 +316,16 @@ def _person_full_name(p: dict) -> str:
 
 def _names_from_ids(ids: List[str], person_by_id: Dict[str, dict]) -> List[str]:
     return [_person_full_name(person_by_id[pid]) for pid in ids if pid in person_by_id]
+
+
+def _snapshot_persons(ids: List[str], person_by_id: Dict[str, dict]) -> List[dict]:
+    """Return [{id, name}] snapshot for a list of person ids — used to freeze names
+    onto records so downstream views survive a roster re-upload."""
+    out: List[dict] = []
+    for pid in ids or []:
+        p = person_by_id.get(pid)
+        out.append({"id": pid, "name": _person_full_name(p) if p else pid})
+    return out
 
 
 def _apply_override_picks(
@@ -436,9 +478,12 @@ async def generate_schedule(req: ScheduleRequest):
     total_req = sum(a.required for a in assignments)
     total_assigned = sum(len(a.assigned_person_ids) for a in assignments)
     total_short = sum(a.shortage for a in assignments)
+    person_by_id = {p["id"]: p for p in persons}
+    absent_snapshot = _snapshot_persons(req.absent_person_ids, person_by_id)
     sched = Schedule(
         date=req.date, shift=req.shift, line_configs=req.line_configs,
         absent_person_ids=req.absent_person_ids,
+        absent_persons=absent_snapshot,
         assignments=assignments, overrides=req.overrides,
         unassigned_keys=req.unassigned_keys,
         required_overrides=req.required_overrides,
@@ -1325,6 +1370,7 @@ async def close_line(date: str, req: CloseLineRequest):
     snap = _undoable_snapshot(sched, f"Close line · {req.line_key}")
 
     freed_count = 0
+    freed_persons: List[dict] = []  # snapshot [{id, name}] of everyone we freed
     line_base = req.line_key.split(" #")[0]
     # Snapshot BEFORE clearing so reopen can restore associates back to their exact cells.
     pre_close_snapshot = [
@@ -1341,6 +1387,8 @@ async def close_line(date: str, req: CloseLineRequest):
         for a in line_cells
     ]
     for a in line_cells:
+        for pid, name in zip(a["assigned_person_ids"], a["assigned_person_names"]):
+            freed_persons.append({"id": pid, "name": name})
         freed_count += len(a["assigned_person_ids"])
         a["assigned_person_ids"] = []
         a["assigned_person_names"] = []
@@ -1353,6 +1401,7 @@ async def close_line(date: str, req: CloseLineRequest):
         "line": line_base,
         "closed_at": now,
         "freed_count": freed_count,
+        "freed_persons": freed_persons,
         "snapshot": pre_close_snapshot,
     }
     closures = list(sched.get("closures") or [])
@@ -1679,23 +1728,35 @@ async def absenteeism_report(start: str, end: str, only_logged: bool = False):
 
     wb = openpyxl.Workbook()
 
+    def _name_for(pid: str, sched: dict) -> str:
+        """Prefer the frozen snapshot on the schedule so historical absences
+        survive a roster re-upload; fall back to live persons only if missing."""
+        for entry in (sched.get("absent_persons") or []):
+            if entry.get("id") == pid and entry.get("name"):
+                return entry["name"]
+        p = p_by_id.get(pid)
+        return _person_full_name(p) if p else pid
+
     # PRIMARY sheet: cumulative per-person totals with dates
     ws = wb.active
     ws.title = "By Person"
     counts: Dict[str, int] = defaultdict(int)
     dates_by_person: Dict[str, List[str]] = defaultdict(list)
+    names_by_person: Dict[str, str] = {}
     for s in docs:
         for pid in s.get("absent_person_ids", []) or []:
             counts[pid] += 1
             dates_by_person[pid].append(f"{s['date']} ({s.get('shift','day')})")
+            if pid not in names_by_person:
+                names_by_person[pid] = _name_for(pid, s)
     ws.cell(row=1, column=1, value="Name").font = Font(bold=True)
     ws.cell(row=1, column=2, value="Employee Type").font = Font(bold=True)
     ws.cell(row=1, column=3, value="Total Absent Days").font = Font(bold=True)
     ws.cell(row=1, column=4, value="Dates Absent").font = Font(bold=True)
-    ranked = sorted(counts.items(), key=lambda x: (-x[1], p_by_id.get(x[0], {}).get("name", "")))
+    ranked = sorted(counts.items(), key=lambda x: (-x[1], names_by_person.get(x[0], "")))
     for ri, (pid, cnt) in enumerate(ranked, 2):
         p = p_by_id.get(pid)
-        ws.cell(row=ri, column=1, value=_person_full_name(p) if p else pid)
+        ws.cell(row=ri, column=1, value=names_by_person.get(pid, pid))
         ws.cell(row=ri, column=2, value=(p or {}).get("employee_type", ""))
         ws.cell(row=ri, column=3, value=cnt)
         ws.cell(row=ri, column=4, value=", ".join(dates_by_person[pid]))
@@ -1709,9 +1770,7 @@ async def absenteeism_report(start: str, end: str, only_logged: bool = False):
         ws2.cell(row=1, column=ci, value=h).font = Font(bold=True)
     for ri, s in enumerate(docs, 2):
         absent_ids = s.get("absent_person_ids", []) or []
-        names = ", ".join(
-            _person_full_name(p_by_id[pid]) for pid in absent_ids if pid in p_by_id
-        ) or ""
+        names = ", ".join(_name_for(pid, s) for pid in absent_ids) or ""
         ws2.cell(row=ri, column=1, value=s["date"])
         ws2.cell(row=ri, column=2, value=s.get("shift", "day"))
         ws2.cell(row=ri, column=3, value=len(absent_ids))
@@ -1802,6 +1861,9 @@ async def monthly_analytics(month: Optional[str] = None):
     # --- 1) Top absentees
     absentee_counts: Dict[str, int] = defaultdict(int)
     absentee_dates: Dict[str, List[str]] = defaultdict(list)
+    # Prefer the name snapshotted onto each schedule at write-time; fall back to
+    # live persons only if a legacy schedule pre-dates the snapshot.
+    frozen_names: Dict[str, str] = {}
     for s in docs:
         seen_today: set = set()  # de-dup within a date (same person absent day+evening etc.)
         for pid in s.get("absent_person_ids", []):
@@ -1811,12 +1873,21 @@ async def monthly_analytics(month: Optional[str] = None):
             seen_today.add(key)
             absentee_counts[pid] += 1
             absentee_dates[pid].append(s["date"])
+        for entry in (s.get("absent_persons") or []):
+            if entry.get("id") and entry.get("name") and entry["id"] not in frozen_names:
+                frozen_names[entry["id"]] = entry["name"]
+
+    def _name_for_person(pid: str) -> str:
+        if pid in frozen_names:
+            return frozen_names[pid]
+        p = p_by_id.get(pid)
+        return _person_full_name(p) if p else pid
+
     top_absentees = []
     for pid, cnt in sorted(absentee_counts.items(), key=lambda x: -x[1])[:10]:
-        p = p_by_id.get(pid)
         top_absentees.append({
             "person_id": pid,
-            "name": _person_full_name(p) if p else pid,
+            "name": _name_for_person(pid),
             "count": cnt,
             "dates": sorted(set(absentee_dates[pid])),
         })
@@ -2000,8 +2071,34 @@ async def on_startup():
     try:
         await seed_from_file_if_empty()
         await _migrate_canonical_line_names()
+        await _backfill_absent_persons()
     except Exception as e:
         logger.exception(f"Startup init failed: {e}")
+
+
+async def _backfill_absent_persons():
+    """One-time migration: fill in `absent_persons: [{id, name}]` on schedules that
+    only stored `absent_person_ids`. Uses the current persons collection for name
+    lookup — anything not resolvable keeps the id as the name (visible but obvious)."""
+    persons = await db.persons.find({}, {"_id": 0}).to_list(2000)
+    p_by_id = {p["id"]: p for p in persons}
+    cursor = db.schedules.find(
+        {"$and": [
+            {"absent_person_ids": {"$exists": True, "$ne": []}},
+            {"$or": [
+                {"absent_persons": {"$exists": False}},
+                {"absent_persons": []},
+            ]},
+        ]},
+        {"_id": 1, "date": 1, "shift": 1, "absent_person_ids": 1},
+    ).limit(5000)
+    async for s in cursor:
+        snap = _snapshot_persons(s.get("absent_person_ids", []), p_by_id)
+        if snap:
+            await db.schedules.update_one(
+                {"_id": s["_id"]},
+                {"$set": {"absent_persons": snap}},
+            )
 
 
 async def _migrate_canonical_line_names():
