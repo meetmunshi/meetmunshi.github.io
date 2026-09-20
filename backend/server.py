@@ -5,6 +5,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import io
 import re
+import asyncio
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
@@ -317,16 +318,44 @@ async def upload_excel(file: UploadFile = File(...), confirm: bool = False):
             p.id = prior_id
 
     reused = reused_mobile + reused_sn + reused_name
-    await db.persons.delete_many({})
-    await db.line_details.delete_many({})
-    await db.persons.insert_many([p.model_dump() for p in persons])
-    await db.line_details.insert_many([d.model_dump() for d in details])
+
+    # Replace via targeted upsert + orphan cleanup (no wildcard delete_many).
+    from pymongo import ReplaceOne
+    new_ids = [p.id for p in persons]
+    if persons:
+        await db.persons.bulk_write(
+            [ReplaceOne({"id": p.id}, p.model_dump(), upsert=True) for p in persons],
+            ordered=False,
+        )
+    removed_persons = await db.persons.delete_many({"id": {"$nin": new_ids}})
+
+    # line_details have no stable id referenced by other collections; identify by their
+    # natural key (line, row_name, detail) and refresh the whole set the same way.
+    new_detail_keys = [{"line": d.line, "row_name": d.row_name, "detail": d.detail} for d in details]
+    if details:
+        await db.line_details.bulk_write(
+            [
+                ReplaceOne(
+                    {"line": d.line, "row_name": d.row_name, "detail": d.detail},
+                    d.model_dump(),
+                    upsert=True,
+                )
+                for d in details
+            ],
+            ordered=False,
+        )
+    removed_details = await db.line_details.delete_many({
+        "$nor": [{"line": k["line"], "row_name": k["row_name"], "detail": k["detail"]} for k in new_detail_keys]
+    } if new_detail_keys else {})
+
     return {
         "persons": len(persons),
         "details": len(details),
         "ids_reused": reused,
         "ids_reused_by": {"mobile": reused_mobile, "sn": reused_sn, "name": reused_name},
         "ids_new": len(persons) - reused,
+        "removed_persons": removed_persons.deleted_count,
+        "removed_details": removed_details.deleted_count,
     }
 
 
@@ -2090,19 +2119,52 @@ logger = logging.getLogger(__name__)
 
 @app.on_event("startup")
 async def on_startup():
+    """Only synchronous, non-destructive setup runs here.
+    Automated data retention (auto-archive, purge, stale-setup cleanup) is opt-in
+    via ENABLE_AUTO_HOUSEKEEPING=true; when enabled, it runs as a delayed
+    background task so pod restarts never touch delete_many on the critical path.
+    """
     try:
         await seed_from_file_if_empty()
         await _migrate_canonical_line_names()
         await _backfill_absent_persons()
-        await _auto_archive_and_purge()
-        await _purge_stale_setups()
+        if os.environ.get("ENABLE_AUTO_HOUSEKEEPING", "false").lower() == "true":
+            logger.info("Housekeeping: background task scheduled (opt-in)")
+            asyncio.create_task(_housekeeping_loop())
     except Exception as e:
         logger.exception(f"Startup init failed: {e}")
 
 
+@api_router.post("/admin/housekeeping/run")
+async def run_housekeeping_manually():
+    """Admin-triggered housekeeping. Same logic as the opt-in background loop.
+    Requires an explicit HTTP call — never runs automatically unless opted-in."""
+    await _auto_archive_and_purge()
+    await _purge_stale_setups()
+    return {"status": "ok"}
+
+
+HOUSEKEEPING_INITIAL_DELAY_SEC = int(os.environ.get("HOUSEKEEPING_INITIAL_DELAY_SEC", "300"))  # 5 min after boot
+HOUSEKEEPING_INTERVAL_SEC = int(os.environ.get("HOUSEKEEPING_INTERVAL_SEC", str(24 * 60 * 60)))  # 24h thereafter
+
+
+async def _housekeeping_loop():
+    """Background housekeeping: auto-archive old records, purge very-old archived
+    records, and delete stale unlogged drafts. Runs on a delayed initial pass then
+    on a fixed interval — never on the synchronous startup path."""
+    await asyncio.sleep(HOUSEKEEPING_INITIAL_DELAY_SEC)
+    while True:
+        try:
+            await _auto_archive_and_purge()
+            await _purge_stale_setups()
+        except Exception as e:
+            logger.exception(f"Housekeeping tick failed: {e}")
+        await asyncio.sleep(HOUSEKEEPING_INTERVAL_SEC)
+
+
 async def _auto_archive_and_purge():
-    """Housekeeping: records older than 3 months move from active to archived; archived
-    records older than 12 months are permanently deleted. Runs on every startup."""
+    """Records older than 3 months move from active to archived; archived records
+    older than 12 months are permanently deleted. Called from the background loop."""
     from datetime import timedelta
     today = datetime.now(timezone.utc).date()
     archive_cutoff = (today - timedelta(days=90)).isoformat()
@@ -2120,7 +2182,7 @@ async def _auto_archive_and_purge():
 
 async def _purge_stale_setups():
     """Delete incomplete shift setup sessions — schedules never logged AND created
-    more than 24h ago. Prevents drafts accumulating in the DB."""
+    more than 24h ago. Called from the background loop."""
     from datetime import timedelta
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     r = await db.schedules.delete_many({
