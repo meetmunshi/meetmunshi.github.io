@@ -71,7 +71,7 @@ export default function AppLayout() {
                     ))}
                 </nav>
                 <div className="hidden md:block px-6 py-4 border-t border-white/10 text-[10px] tracking-[0.2em] uppercase text-zinc-600">
-                    v2.0 · Control Room
+                    v3.0 · Control Room
                 </div>
             </aside>
             )}

@@ -267,12 +267,22 @@ async def upload_excel(file: UploadFile = File(...), confirm: bool = False):
     if not persons or not details:
         raise HTTPException(400, "No data found")
 
-    # Build lookup of existing associates so we can REUSE their IDs when re-uploading
-    # (matching on mobile first, then on serial number). This prevents ID orphaning
-    # of every record that references a person_id.
+    # Build fallback lookups so we can REUSE existing IDs across re-uploads. Order:
+    #   1. mobile number  (unique-ish, most stable)
+    #   2. serial number  (from the Excel `sn` column)
+    #   3. full-name + employee-type combo  (last-ditch match for people without a mobile)
+    # This prevents ID orphaning of every downstream record.
     existing = await db.persons.find({}, {"_id": 0}).to_list(2000)
+
+    def _norm(s: str) -> str:
+        return (s or "").strip().lower()
+
+    def _name_key(name: str, surname: str, etype: str) -> str:
+        return f"{_norm(name)}|{_norm(surname)}|{_norm(etype)}"
+
     by_mobile: Dict[str, str] = {}
     by_sn: Dict[int, str] = {}
+    by_name_dept: Dict[str, str] = {}
     for e in existing:
         mob = (e.get("mobile") or "").strip()
         if mob:
@@ -280,16 +290,33 @@ async def upload_excel(file: UploadFile = File(...), confirm: bool = False):
         sn = e.get("sn")
         if isinstance(sn, int):
             by_sn[sn] = e["id"]
-    reused = 0
+        nk = _name_key(e.get("name", ""), e.get("surname", ""), e.get("employee_type", ""))
+        # Only index when it's a full identifier — bare "name" alone is too ambiguous
+        if nk.replace("|", "").strip():
+            by_name_dept[nk] = e["id"]
+
+    reused_mobile = reused_sn = reused_name = 0
     for p in persons:
+        prior_id = None
         mob = (p.mobile or "").strip()
-        prior_id = by_mobile.get(mob) if mob else None
+        if mob:
+            prior_id = by_mobile.get(mob)
+            if prior_id:
+                reused_mobile += 1
         if not prior_id and isinstance(p.sn, int):
             prior_id = by_sn.get(p.sn)
+            if prior_id:
+                reused_sn += 1
+        if not prior_id:
+            nk = _name_key(p.name, p.surname or "", p.employee_type or "")
+            if nk.replace("|", "").strip():
+                prior_id = by_name_dept.get(nk)
+                if prior_id:
+                    reused_name += 1
         if prior_id:
             p.id = prior_id
-            reused += 1
 
+    reused = reused_mobile + reused_sn + reused_name
     await db.persons.delete_many({})
     await db.line_details.delete_many({})
     await db.persons.insert_many([p.model_dump() for p in persons])
@@ -298,6 +325,7 @@ async def upload_excel(file: UploadFile = File(...), confirm: bool = False):
         "persons": len(persons),
         "details": len(details),
         "ids_reused": reused,
+        "ids_reused_by": {"mobile": reused_mobile, "sn": reused_sn, "name": reused_name},
         "ids_new": len(persons) - reused,
     }
 
