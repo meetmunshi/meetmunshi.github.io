@@ -9,7 +9,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
-import { Search, ArrowUpDown, Download } from "lucide-react";
+import { Search, ArrowUpDown, Download, ChevronDown } from "lucide-react";
 
 export default function PersonsPage() {
     const [persons, setPersons] = useState([]);
@@ -19,6 +19,13 @@ export default function PersonsPage() {
     const [sortBy, setSortBy] = useState("name");
     const [sortDir, setSortDir] = useState("asc");
     const [typeFilter, setTypeFilter] = useState("all");
+    const [expanded, setExpanded] = useState(() => new Set());
+    const toggleExpanded = (id) =>
+        setExpanded((prev) => {
+            const next = new Set(prev);
+            next.has(id) ? next.delete(id) : next.add(id);
+            return next;
+        });
 
     useEffect(() => {
         Promise.all([fetchPersons(), fetchDetails()])
@@ -180,13 +187,32 @@ export default function PersonsPage() {
                                     </Badge>
                                 </div>
                                 <div className="col-span-4">
+                                    {skillCount === 0 ? (
+                                        <span
+                                            className="inline-block mb-1.5 text-[10px] uppercase tracking-wider border border-white/10 text-zinc-600 px-2 py-0.5 cursor-not-allowed"
+                                            data-testid={`person-skills-toggle-${p.id}`}
+                                        >
+                                            0 skills
+                                        </span>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleExpanded(p.id)}
+                                            aria-expanded={expanded.has(p.id)}
+                                            className="inline-flex items-center gap-1 mb-1.5 text-[10px] uppercase tracking-wider border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 px-2 py-0.5 hover:bg-emerald-500/20 transition-colors"
+                                            data-testid={`person-skills-toggle-${p.id}`}
+                                        >
+                                            {skillCount} {skillCount === 1 ? "skill" : "skills"}
+                                            <ChevronDown
+                                                className={`w-3 h-3 transition-transform ${expanded.has(p.id) ? "rotate-180" : ""}`}
+                                            />
+                                        </button>
+                                    )}
+                                    {expanded.has(p.id) && skillCount > 0 && (
                                     <div
                                         className="flex flex-wrap gap-1 mb-1.5"
                                         data-testid={`person-skills-${p.id}`}
                                     >
-                                        {trainedSkills.length === 0 && (
-                                            <span className="text-[10px] text-zinc-600 italic">No trained skills</span>
-                                        )}
                                         {trainedSkills.map((sk) => (
                                             <span
                                                 key={sk}
@@ -197,6 +223,7 @@ export default function PersonsPage() {
                                             </span>
                                         ))}
                                     </div>
+                                    )}
                                     <div className="flex items-center gap-2">
                                         <div className="flex-1 h-1 bg-white/10 max-w-[160px]">
                                             <div

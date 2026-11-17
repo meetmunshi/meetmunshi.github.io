@@ -77,3 +77,5 @@
 - P2: Undo/redo stack on manual adjustments.
 - P2: Mobile PWA – install to home screen, offline absentee marking.
 - P2: SMS / WhatsApp broadcast of daily schedule to persons.
+
+- 2026-06: Persons page — skill tags replaced by a clickable "N skills" button that opens and closes the tags inline (several rows can be open at once; 0 skills shows a greyed-out label). Self-tested via screenshot.
