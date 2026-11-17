@@ -2132,6 +2132,26 @@ async def stats():
     return {"persons": persons, "details": details, "lines": len(lines), "schedules": schedules}
 
 
+@api_router.get("/skills/coverage")
+async def skills_coverage():
+    """Return per-skill trained-associate counts.
+    Rows: [{skill, trained_count, total_associates}]  — sorted by trained_count desc.
+    Skill order follows the same first-seen order as the Excel columns."""
+    persons = await db.persons.find({}, {"_id": 0, "skills": 1}).to_list(2000)
+    counts: Dict[str, int] = {}
+    order: List[str] = []
+    for p in persons:
+        for sk, v in (p.get("skills") or {}).items():
+            if sk not in counts:
+                counts[sk] = 0
+                order.append(sk)
+            if v:
+                counts[sk] += 1
+    rows = [{"skill": sk, "trained_count": counts[sk], "total_associates": len(persons)} for sk in order]
+    rows.sort(key=lambda r: (-r["trained_count"], r["skill"]))
+    return {"total_associates": len(persons), "rows": rows}
+
+
 app.include_router(api_router)
 
 app.add_middleware(

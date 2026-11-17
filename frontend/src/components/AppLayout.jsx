@@ -8,6 +8,7 @@ import {
     BarChart3,
     CalendarDays,
     Flame,
+    GraduationCap,
     BookOpen,
 } from "lucide-react";
 
@@ -17,6 +18,7 @@ const navItems = [
     { to: "/history", icon: CalendarDays, label: "History", testid: "nav-history" },
     { to: "/analytics", icon: BarChart3, label: "Analytics", testid: "nav-analytics" },
     { to: "/heatmap", icon: Flame, label: "Heatmap", testid: "nav-heatmap" },
+    { to: "/skills", icon: GraduationCap, label: "Skill Coverage", testid: "nav-skills" },
     { to: "/persons", icon: Users, label: "Persons", testid: "nav-persons" },
     { to: "/sop", icon: BookOpen, label: "SOP", testid: "nav-sop" },
     { to: "/upload", icon: Upload, label: "Upload", testid: "nav-upload" },

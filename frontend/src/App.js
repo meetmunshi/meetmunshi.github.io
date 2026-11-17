@@ -8,6 +8,7 @@ import UploadPage from "@/pages/UploadPage";
 import AnalyticsPage from "@/pages/AnalyticsPage";
 import HistoryPage from "@/pages/HistoryPage";
 import HeatmapPage from "@/pages/HeatmapPage";
+import SkillCoveragePage from "@/pages/SkillCoveragePage";
 import SopPage from "@/pages/SopPage";
 
 function App() {
@@ -21,6 +22,7 @@ function App() {
                         <Route path="/history" element={<HistoryPage />} />
                         <Route path="/analytics" element={<AnalyticsPage />} />
                         <Route path="/heatmap" element={<HeatmapPage />} />
+                        <Route path="/skills" element={<SkillCoveragePage />} />
                         <Route path="/persons" element={<PersonsPage />} />
                         <Route path="/sop" element={<SopPage />} />
                         <Route path="/upload" element={<UploadPage />} />
