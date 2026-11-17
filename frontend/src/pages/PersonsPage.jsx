@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchPersons, fetchDetails } from "@/lib/api";
+import { fetchPersons, fetchDetails, personsExportUrl } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -9,7 +9,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
-import { Search, ArrowUpDown } from "lucide-react";
+import { Search, ArrowUpDown, Download } from "lucide-react";
 
 export default function PersonsPage() {
     const [persons, setPersons] = useState([]);
@@ -55,16 +55,34 @@ export default function PersonsPage() {
 
     return (
         <div className="p-6 md:p-8">
-            <header className="mb-8">
-                <div className="text-xs tracking-[0.25em] uppercase text-zinc-500 mb-2">
-                    Workforce Registry
+            <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
+                <div>
+                    <div className="text-xs tracking-[0.25em] uppercase text-zinc-500 mb-2">
+                        Workforce Registry
+                    </div>
+                    <h1 className="font-chivo font-black uppercase text-4xl md:text-5xl tracking-tight leading-none">
+                        Persons
+                    </h1>
+                    <p className="text-zinc-400 mt-3 text-sm">
+                        {persons.length} total · {details.length} skill columns
+                    </p>
                 </div>
-                <h1 className="font-chivo font-black uppercase text-4xl md:text-5xl tracking-tight leading-none">
-                    Persons
-                </h1>
-                <p className="text-zinc-400 mt-3 text-sm">
-                    {persons.length} total · {details.length} skill columns
-                </p>
+                <div className="flex items-center gap-2">
+                    <a
+                        href={personsExportUrl("xlsx")}
+                        data-testid="persons-export-xlsx"
+                        className="inline-flex items-center gap-1.5 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 uppercase tracking-widest text-[10px] font-bold px-3 py-2"
+                    >
+                        <Download className="w-3 h-3" /> Excel
+                    </a>
+                    <a
+                        href={personsExportUrl("csv")}
+                        data-testid="persons-export-csv"
+                        className="inline-flex items-center gap-1.5 border border-white/15 text-white hover:bg-white/10 uppercase tracking-widest text-[10px] font-bold px-3 py-2"
+                    >
+                        <Download className="w-3 h-3" /> CSV
+                    </a>
+                </div>
             </header>
 
             <div className="flex flex-wrap items-center gap-3 mb-6">
@@ -129,17 +147,19 @@ export default function PersonsPage() {
                     <div className="grid grid-cols-12 px-4 py-3 border-b border-white/10 bg-[#111] text-[10px] uppercase tracking-[0.25em] text-zinc-500">
                         <div className="col-span-1">#</div>
                         <div className="col-span-3">Name</div>
-                        <div className="col-span-3">Qualification</div>
+                        <div className="col-span-2">Qualification</div>
                         <div className="col-span-2">Type</div>
-                        <div className="col-span-3">Skills</div>
+                        <div className="col-span-4">Skills</div>
                     </div>
                     {filtered.map((p, idx) => {
-                        const skillCount = Object.values(p.skills || {}).filter(Boolean)
-                            .length;
+                        const trainedSkills = Object.entries(p.skills || {})
+                            .filter(([, v]) => v)
+                            .map(([k]) => k);
+                        const skillCount = trainedSkills.length;
                         return (
                             <div
                                 key={p.id}
-                                className="grid grid-cols-12 px-4 py-3 border-b border-white/5 text-sm hover:bg-white/5"
+                                className="grid grid-cols-12 px-4 py-3 border-b border-white/5 text-sm hover:bg-white/5 items-start"
                                 data-testid={`person-row-${p.id}`}
                             >
                                 <div className="col-span-1 text-zinc-500 font-mono-ibm">
@@ -148,7 +168,7 @@ export default function PersonsPage() {
                                 <div className="col-span-3 font-semibold">
                                     {p.name} {p.surname}
                                 </div>
-                                <div className="col-span-3 text-zinc-400 text-xs">
+                                <div className="col-span-2 text-zinc-400 text-xs">
                                     {p.qualification || "—"}
                                 </div>
                                 <div className="col-span-2">
@@ -159,18 +179,37 @@ export default function PersonsPage() {
                                         {p.employee_type || "—"}
                                     </Badge>
                                 </div>
-                                <div className="col-span-3 flex items-center gap-2">
-                                    <div className="flex-1 h-1.5 bg-white/10">
-                                        <div
-                                            className="h-full bg-[#3B6AB8]"
-                                            style={{
-                                                width: `${(skillCount / Math.max(details.length, 1)) * 100}%`,
-                                            }}
-                                        />
+                                <div className="col-span-4">
+                                    <div
+                                        className="flex flex-wrap gap-1 mb-1.5"
+                                        data-testid={`person-skills-${p.id}`}
+                                    >
+                                        {trainedSkills.length === 0 && (
+                                            <span className="text-[10px] text-zinc-600 italic">No trained skills</span>
+                                        )}
+                                        {trainedSkills.map((sk) => (
+                                            <span
+                                                key={sk}
+                                                title={sk}
+                                                className="inline-block text-[9px] uppercase tracking-wider border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 px-1.5 py-0.5 leading-tight"
+                                            >
+                                                {sk}
+                                            </span>
+                                        ))}
                                     </div>
-                                    <span className="font-mono-ibm text-xs text-zinc-300">
-                                        {skillCount}/{details.length}
-                                    </span>
+                                    <div className="flex items-center gap-2">
+                                        <div className="flex-1 h-1 bg-white/10 max-w-[160px]">
+                                            <div
+                                                className="h-full bg-[#3B6AB8]"
+                                                style={{
+                                                    width: `${(skillCount / Math.max(details.length, 1)) * 100}%`,
+                                                }}
+                                            />
+                                        </div>
+                                        <span className="font-mono-ibm text-[10px] text-zinc-500">
+                                            {skillCount}/{details.length}
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
                         );

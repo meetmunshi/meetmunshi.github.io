@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchSkillCoverage } from "@/lib/api";
-import { GraduationCap, Search } from "lucide-react";
+import { fetchSkillCoverage, skillsCoverageExportUrl } from "@/lib/api";
+import { GraduationCap, Search, Download } from "lucide-react";
 
 export default function SkillCoveragePage() {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [q, setQ] = useState("");
+    const [sort, setSort] = useState("count"); // 'count' | 'name'
 
     useEffect(() => {
         fetchSkillCoverage()
@@ -13,14 +14,20 @@ export default function SkillCoveragePage() {
             .finally(() => setLoading(false));
     }, []);
 
-    const rows = data?.rows || [];
+    const rows = useMemo(() => data?.rows || [], [data]);
     const total = data?.total_associates || 0;
 
-    const filtered = useMemo(() => {
+    const sortedFiltered = useMemo(() => {
         const needle = q.trim().toLowerCase();
-        if (!needle) return rows;
-        return rows.filter((r) => r.skill.toLowerCase().includes(needle));
-    }, [rows, q]);
+        const list = needle ? rows.filter((r) => r.skill.toLowerCase().includes(needle)) : rows;
+        const out = [...list];
+        if (sort === "name") {
+            out.sort((a, b) => a.skill.localeCompare(b.skill));
+        } else {
+            out.sort((a, b) => (b.trained_count - a.trained_count) || a.skill.localeCompare(b.skill));
+        }
+        return out;
+    }, [rows, q, sort]);
 
     const barColor = (count) => {
         if (total === 0) return "bg-zinc-700";
@@ -56,24 +63,63 @@ export default function SkillCoveragePage() {
                 </div>
             </header>
 
-            <div className="mb-4 flex items-center gap-2 border border-white/10 bg-[#111] px-3 py-2 w-full md:w-96">
-                <Search className="w-4 h-4 text-zinc-500" />
-                <input
-                    type="text"
-                    value={q}
-                    onChange={(e) => setQ(e.target.value)}
-                    placeholder="Filter by skill name…"
-                    data-testid="skill-filter"
-                    className="w-full bg-transparent text-sm focus:outline-none placeholder:text-zinc-600"
-                />
-                {q && (
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2 border border-white/10 bg-[#111] px-3 py-2 flex-1 min-w-[220px] md:max-w-[380px]">
+                    <Search className="w-4 h-4 text-zinc-500" />
+                    <input
+                        type="text"
+                        value={q}
+                        onChange={(e) => setQ(e.target.value)}
+                        placeholder="Filter by skill name…"
+                        data-testid="skill-filter"
+                        className="w-full bg-transparent text-sm focus:outline-none placeholder:text-zinc-600"
+                    />
+                    {q && (
+                        <button
+                            onClick={() => setQ("")}
+                            className="text-[10px] uppercase tracking-widest text-zinc-500 hover:text-white"
+                        >
+                            Clear
+                        </button>
+                    )}
+                </div>
+
+                {/* Sort toggle */}
+                <div className="flex items-center" data-testid="skill-sort">
+                    <span className="text-[10px] uppercase tracking-[0.2em] text-zinc-500 mr-2">Sort</span>
                     <button
-                        onClick={() => setQ("")}
-                        className="text-[10px] uppercase tracking-widest text-zinc-500 hover:text-white"
+                        onClick={() => setSort("count")}
+                        data-testid="skill-sort-count"
+                        className={`uppercase tracking-widest text-[10px] font-bold px-3 py-2 border ${sort === "count" ? "bg-white text-black border-white" : "text-white/70 border-white/15 hover:bg-white/10"}`}
                     >
-                        Clear
+                        Trained · High → Low
                     </button>
-                )}
+                    <button
+                        onClick={() => setSort("name")}
+                        data-testid="skill-sort-name"
+                        className={`uppercase tracking-widest text-[10px] font-bold px-3 py-2 border border-l-0 ${sort === "name" ? "bg-white text-black border-white" : "text-white/70 border-white/15 hover:bg-white/10"}`}
+                    >
+                        Skill · A → Z
+                    </button>
+                </div>
+
+                {/* Download buttons */}
+                <div className="flex items-center gap-2 md:ml-auto">
+                    <a
+                        href={skillsCoverageExportUrl("xlsx", sort)}
+                        data-testid="skill-export-xlsx"
+                        className="inline-flex items-center gap-1.5 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 uppercase tracking-widest text-[10px] font-bold px-3 py-2"
+                    >
+                        <Download className="w-3 h-3" /> Excel
+                    </a>
+                    <a
+                        href={skillsCoverageExportUrl("csv", sort)}
+                        data-testid="skill-export-csv"
+                        className="inline-flex items-center gap-1.5 border border-white/15 text-white hover:bg-white/10 uppercase tracking-widest text-[10px] font-bold px-3 py-2"
+                    >
+                        <Download className="w-3 h-3" /> CSV
+                    </a>
+                </div>
             </div>
 
             <div className="border border-white/10 bg-[#111]">
@@ -87,7 +133,7 @@ export default function SkillCoveragePage() {
                     <div className="p-6 text-sm text-zinc-500">Loading skill coverage…</div>
                 )}
 
-                {!loading && filtered.length === 0 && (
+                {!loading && sortedFiltered.length === 0 && (
                     <div className="p-6 text-sm text-zinc-500" data-testid="skill-empty">
                         {rows.length === 0
                             ? "No skills in the roster yet. Upload a skill matrix to populate this view."
@@ -96,7 +142,7 @@ export default function SkillCoveragePage() {
                 )}
 
                 <div className="divide-y divide-white/5">
-                    {filtered.map((r) => {
+                    {sortedFiltered.map((r) => {
                         const pct = total === 0 ? 0 : Math.round((r.trained_count / total) * 100);
                         return (
                             <div

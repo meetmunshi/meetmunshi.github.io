@@ -1,4 +1,5 @@
 from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -2150,6 +2151,122 @@ async def skills_coverage():
     rows = [{"skill": sk, "trained_count": counts[sk], "total_associates": len(persons)} for sk in order]
     rows.sort(key=lambda r: (-r["trained_count"], r["skill"]))
     return {"total_associates": len(persons), "rows": rows}
+
+
+@api_router.get("/skills/coverage/export")
+async def export_skills_coverage(fmt: str = "xlsx", sort: str = "count"):
+    """Download the skill-coverage table as .xlsx or .csv. `sort=count` (default)
+    sorts by trained count desc; `sort=name` sorts alphabetically."""
+    data = await skills_coverage()
+    total = data["total_associates"]
+    rows = list(data["rows"])
+    if sort == "name":
+        rows.sort(key=lambda r: r["skill"].lower())
+    # else keep API's count-desc order
+    headers = ["Skill", "Trained Count", "Total Associates", "Coverage %"]
+    body_rows = [
+        [
+            r["skill"],
+            r["trained_count"],
+            total,
+            round((r["trained_count"] / total) * 100, 1) if total else 0,
+        ]
+        for r in rows
+    ]
+
+    if fmt == "csv":
+        import csv
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(headers)
+        w.writerows(body_rows)
+        return StreamingResponse(
+            io.BytesIO(buf.getvalue().encode("utf-8")),
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="skill-coverage.csv"'},
+        )
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Skill Coverage"
+    for ci, h in enumerate(headers, 1):
+        ws.cell(row=1, column=ci, value=h).font = Font(bold=True)
+    for ri, row in enumerate(body_rows, 2):
+        for ci, v in enumerate(row, 1):
+            ws.cell(row=ri, column=ci, value=v)
+    for col_letter, width in [("A", 42), ("B", 16), ("C", 20), ("D", 14)]:
+        ws.column_dimensions[col_letter].width = width
+    out = io.BytesIO()
+    wb.save(out)
+    out.seek(0)
+    return StreamingResponse(
+        out,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="skill-coverage.xlsx"'},
+    )
+
+
+@api_router.get("/persons/export")
+async def export_persons(fmt: str = "xlsx"):
+    """Download the full associate roster — base fields plus a comma-separated list
+    of skills each associate is trained on (where the cell was "Yes")."""
+    persons = await db.persons.find({}, {"_id": 0}).to_list(2000)
+
+    def _trained_list(p: dict) -> str:
+        return ", ".join(sk for sk, v in (p.get("skills") or {}).items() if v)
+
+    headers = [
+        "Sr No", "Name", "Surname", "Date of Joining", "Qualification",
+        "Employee Type", "Mobile", "Skill Count", "Skills Trained On",
+    ]
+    body_rows = [
+        [
+            p.get("sn") if p.get("sn") is not None else "",
+            p.get("name", ""),
+            p.get("surname", "") or "",
+            p.get("date_of_joining", "") or "",
+            p.get("qualification", "") or "",
+            p.get("employee_type", "") or "",
+            p.get("mobile", "") or "",
+            sum(1 for v in (p.get("skills") or {}).values() if v),
+            _trained_list(p),
+        ]
+        for p in persons
+    ]
+
+    if fmt == "csv":
+        import csv
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(headers)
+        w.writerows(body_rows)
+        return StreamingResponse(
+            io.BytesIO(buf.getvalue().encode("utf-8")),
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="associates.csv"'},
+        )
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Associates"
+    for ci, h in enumerate(headers, 1):
+        ws.cell(row=1, column=ci, value=h).font = Font(bold=True)
+    for ri, row in enumerate(body_rows, 2):
+        for ci, v in enumerate(row, 1):
+            ws.cell(row=ri, column=ci, value=v)
+    for col_letter, width in [
+        ("A", 8), ("B", 16), ("C", 16), ("D", 14), ("E", 24),
+        ("F", 18), ("G", 16), ("H", 12), ("I", 100),
+    ]:
+        ws.column_dimensions[col_letter].width = width
+    out = io.BytesIO()
+    wb.save(out)
+    out.seek(0)
+    return StreamingResponse(
+        out,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="associates.xlsx"'},
+    )
 
 
 app.include_router(api_router)
