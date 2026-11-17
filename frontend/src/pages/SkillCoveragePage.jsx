@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchSkillCoverage, skillsCoverageExportUrl } from "@/lib/api";
-import { GraduationCap, Search, Download } from "lucide-react";
+import { GraduationCap, Search, Download, ChevronDown } from "lucide-react";
 
 export default function SkillCoveragePage() {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [q, setQ] = useState("");
     const [sort, setSort] = useState("count"); // 'count' | 'name'
+    const [expanded, setExpanded] = useState(() => new Set());
+    const toggleExpanded = (skill) =>
+        setExpanded((prev) => {
+            const next = new Set(prev);
+            next.has(skill) ? next.delete(skill) : next.add(skill);
+            return next;
+        });
 
     useEffect(() => {
         fetchSkillCoverage()
@@ -144,11 +151,11 @@ export default function SkillCoveragePage() {
                 <div className="divide-y divide-white/5">
                     {sortedFiltered.map((r) => {
                         const pct = total === 0 ? 0 : Math.round((r.trained_count / total) * 100);
+                        const isOpen = expanded.has(r.skill);
                         return (
+                            <div key={r.skill} data-testid={`skill-row-${r.skill}`}>
                             <div
-                                key={r.skill}
                                 className="grid grid-cols-[1fr_120px] md:grid-cols-[1fr_180px_120px] items-center px-4 py-3 hover:bg-white/5"
-                                data-testid={`skill-row-${r.skill}`}
                             >
                                 <div className="font-chivo font-bold uppercase tracking-tight text-sm text-white">
                                     {r.skill}
@@ -165,16 +172,46 @@ export default function SkillCoveragePage() {
                                     </span>
                                 </div>
                                 <div className="text-right">
-                                    <span
-                                        className="font-mono-ibm text-xl text-white"
-                                        data-testid={`skill-count-${r.skill}`}
-                                    >
-                                        {r.trained_count}
-                                    </span>
-                                    <span className="font-mono-ibm text-xs text-zinc-500 ml-1">
-                                        / {total}
-                                    </span>
+                                    {r.trained_count === 0 ? (
+                                        <span
+                                            className="inline-flex items-baseline px-2 py-0.5 border border-white/10 text-zinc-600 cursor-not-allowed"
+                                            data-testid={`skill-count-${r.skill}`}
+                                        >
+                                            <span className="font-mono-ibm text-xl">0</span>
+                                            <span className="font-mono-ibm text-xs ml-1">/ {total}</span>
+                                        </span>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleExpanded(r.skill)}
+                                            aria-expanded={isOpen}
+                                            className="inline-flex items-center gap-1 px-2 py-0.5 border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors"
+                                            data-testid={`skill-count-${r.skill}`}
+                                        >
+                                            <span className="font-mono-ibm text-xl text-white">{r.trained_count}</span>
+                                            <span className="font-mono-ibm text-xs text-zinc-500">/ {total}</span>
+                                            <ChevronDown
+                                                className={`w-3 h-3 text-emerald-300 transition-transform ${isOpen ? "rotate-180" : ""}`}
+                                            />
+                                        </button>
+                                    )}
                                 </div>
+                            </div>
+                            {isOpen && (
+                                <div
+                                    className="px-4 pb-3 flex flex-wrap gap-1"
+                                    data-testid={`skill-associates-${r.skill}`}
+                                >
+                                    {(r.associates || []).map((a) => (
+                                        <span
+                                            key={a.id}
+                                            className="text-[11px] border border-emerald-500/30 bg-emerald-500/5 text-emerald-200 px-2 py-0.5"
+                                        >
+                                            {a.name}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
                             </div>
                         );
                     })}

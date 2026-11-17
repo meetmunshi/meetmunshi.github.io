@@ -319,33 +319,41 @@ async def upload_excel(file: UploadFile = File(...), confirm: bool = False):
     def _identity_key(name: str, surname: str, doj: str) -> str:
         return f"{_norm(name)}|{_norm(surname)}|{_norm(doj)}"
 
+    def _valid_mobile(m: str) -> bool:
+        return sum(ch.isdigit() for ch in (m or "")) >= 7
+
+    def _valid_doj(d: str) -> bool:
+        return bool(re.match(r"^\d{4}-\d{2}-\d{2}$", (d or "").strip()))
+
     by_mobile: Dict[str, str] = {}
     by_identity: Dict[str, str] = {}
     for e in existing:
         mob = (e.get("mobile") or "").strip()
-        if mob:
+        if _valid_mobile(mob):
             by_mobile[mob] = e["id"]
         ik = _identity_key(e.get("name", ""), e.get("surname", ""), e.get("date_of_joining", ""))
-        # Only index when name + DOJ are both present — bare "name" alone is too ambiguous
-        if _norm(e.get("name", "")) and _norm(e.get("date_of_joining", "")):
+        # Only index when name + a real DOJ are both present — bare "name" alone is too ambiguous
+        if _norm(e.get("name", "")) and _valid_doj(e.get("date_of_joining", "")):
             by_identity[ik] = e["id"]
 
     reused_mobile = reused_identity = 0
+    claimed: set = set()
     for p in persons:
         prior_id = None
         mob = (p.mobile or "").strip()
-        if mob:
+        if _valid_mobile(mob) and by_mobile.get(mob) not in claimed:
             prior_id = by_mobile.get(mob)
             if prior_id:
                 reused_mobile += 1
         if not prior_id:
             ik = _identity_key(p.name, p.surname or "", p.date_of_joining or "")
-            if _norm(p.name) and _norm(p.date_of_joining or ""):
+            if _norm(p.name) and _valid_doj(p.date_of_joining or "") and by_identity.get(ik) not in claimed:
                 prior_id = by_identity.get(ik)
                 if prior_id:
                     reused_identity += 1
         if prior_id:
             p.id = prior_id
+            claimed.add(prior_id)
 
     reused = reused_mobile + reused_identity
 
@@ -2133,22 +2141,57 @@ async def stats():
     return {"persons": persons, "details": details, "lines": len(lines), "schedules": schedules}
 
 
+@api_router.get("/persons/absence-stats")
+async def persons_absence_stats():
+    """Per-associate absence rate across all logged history (active + archived).
+    rate = distinct absent dates / distinct logged dates on or after the associate's DOJ."""
+    persons = await db.persons.find({}, {"_id": 0, "id": 1, "date_of_joining": 1}).to_list(2000)
+    scheds = await db.schedules.find(
+        {"logged_at": {"$ne": None}}, {"_id": 0, "date": 1, "absent_person_ids": 1}
+    ).to_list(20000)
+    logged_dates = sorted({s["date"] for s in scheds if s.get("date")})
+    absent_dates: Dict[str, set] = defaultdict(set)
+    for s in scheds:
+        for pid in s.get("absent_person_ids") or []:
+            absent_dates[pid].add(s["date"])
+    out = {}
+    for p in persons:
+        doj = (p.get("date_of_joining") or "")[:10]
+        eligible = [d for d in logged_dates if not doj or d >= doj]
+        absent = len(absent_dates.get(p["id"], set()))
+        out[p["id"]] = {
+            "absent_days": absent,
+            "logged_days": len(eligible),
+            "rate": round(absent / len(eligible), 4) if eligible else 0,
+        }
+    return out
+
+
 @api_router.get("/skills/coverage")
 async def skills_coverage():
     """Return per-skill trained-associate counts.
     Rows: [{skill, trained_count, total_associates}]  — sorted by trained_count desc.
     Skill order follows the same first-seen order as the Excel columns."""
-    persons = await db.persons.find({}, {"_id": 0, "skills": 1}).to_list(2000)
-    counts: Dict[str, int] = {}
+    persons = await db.persons.find({}, {"_id": 0, "id": 1, "name": 1, "surname": 1, "skills": 1}).to_list(2000)
+    trained: Dict[str, List[dict]] = {}
     order: List[str] = []
     for p in persons:
         for sk, v in (p.get("skills") or {}).items():
-            if sk not in counts:
-                counts[sk] = 0
+            if sk not in trained:
+                trained[sk] = []
                 order.append(sk)
             if v:
-                counts[sk] += 1
-    rows = [{"skill": sk, "trained_count": counts[sk], "total_associates": len(persons)} for sk in order]
+                full = f"{p.get('name', '')} {p.get('surname', '') or ''}".strip()
+                trained[sk].append({"id": p.get("id"), "name": full})
+    rows = [
+        {
+            "skill": sk,
+            "trained_count": len(trained[sk]),
+            "total_associates": len(persons),
+            "associates": sorted(trained[sk], key=lambda a: a["name"].lower()),
+        }
+        for sk in order
+    ]
     rows.sort(key=lambda r: (-r["trained_count"], r["skill"]))
     return {"total_associates": len(persons), "rows": rows}
 

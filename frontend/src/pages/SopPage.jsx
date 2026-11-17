@@ -3,7 +3,7 @@ import {
     ClipboardList, Users, LayoutGrid, PlayCircle,
     Sparkles, Lock, Upload, Monitor, BarChart3, Flame,
     UserCheck, Undo2, Search, Smartphone, Trash2, CalendarDays, Eye,
-    PowerOff, Play,
+    PowerOff, Play, GraduationCap,
 } from "lucide-react";
 
 const steps = [
@@ -142,18 +142,56 @@ const steps = [
             "History (calendar): jump into any past day's board. Hover a day (desktop) or tap the trash icon (mobile) to delete an incorrect record — you'll be asked to confirm, and locked schedules show an extra warning. A ⏻N badge marks days where lines were closed.",
             "Delete an entire month (desktop only): hover the month name in the History calendar and a small trash icon appears next to it. Click it, confirm the count, and every day/shift in that month is deleted in one step. This works on both the Active tab and the Archived Records tab (where it permanently removes archived rows). Not exposed on mobile to prevent accidental taps.",
             "Active vs Archived (desktop only): History defaults to the last 3 months of Active records. Anything older auto-moves to an 'Archived Records' tab on the same page — same calendar, tinted amber, with a banner marking it archived. Archived records auto-purge 12 months from their original date. Incomplete shift setups that were never Logged are auto-deleted after 24h. All housekeeping runs automatically at server startup — no manual action needed.",
-            "Heatmap: which Area × Line pairs are fragile — pick trainees for cross-skilling.",
+            "Heatmap: which Area × Line pairs are fragile — pick trainees for cross-skilling (see Step 16 for how trainees are ranked).",
         ],
     },
     {
         n: "14",
+        title: "Skill Coverage Tab",
+        icon: GraduationCap,
+        body: [
+            "Skill columns come straight from the roster upload: every skill column in the 'person - skill' sheet becomes one row here. An associate counts as trained only where their cell says 'Yes'.",
+            "The summary table shows each skill, a coverage bar (% of the roster trained; red = very few, amber = thin, green = healthy) and the trained count out of the total roster size shown top-right.",
+            "Use the filter box to find a skill by name. Sort with 'Trained · High → Low' (most-covered first) or 'Skill · A → Z' (alphabetical).",
+            "Click Excel or CSV to download the table — the file follows the sort order you've picked.",
+            "Click the trained count on any skill row to expand the list of associates trained on that skill; click again to collapse. Several skills can be open at once. Skills with 0 trained show a greyed-out count that can't be clicked.",
+        ],
+    },
+    {
+        n: "15",
+        title: "Persons (Associates) Tab",
+        icon: Users,
+        body: [
+            "Each associate row shows a skill count button (e.g. '4 SKILLS') counting only skills marked 'Yes'.",
+            "Click the button to expand that associate's individual skill tags inline; click again to collapse. Several rows can stay open at the same time.",
+            "Associates with no trained skills show a greyed-out '0 skills' label that can't be clicked.",
+            "The bar under the button shows trained skills out of all skill columns. Use Excel / CSV at the top to download the full associate list with their skills.",
+        ],
+    },
+    {
+        n: "16",
+        title: "Heatmap — Suggested Trainees",
+        icon: Flame,
+        body: [
+            "Top Training Opportunities lists red (zero or below-requirement coverage) skills first, then amber (fragile) skills.",
+            "Each skill shows up to 5 suggested trainees, ranked by a weighted score out of 100:",
+            "1) Skill priority (40) — red skills carry full weight, amber skills half.",
+            "2) Availability (30) — a lower absence rate across all logged history ranks higher. Rate = days absent ÷ logged days since the associate's date of joining.",
+            "3) Multi-skill gap (20) — associates untrained on many red/amber skills rank higher (red gaps count double), so one training investment closes more gaps.",
+            "4) Tenure (10) — longer service since date of joining ranks higher as a more stable training investment.",
+            "Associates already trained on that skill are never suggested. If two associates score equally, their order rotates once a day so the same names don't always sit on top.",
+            "Hover a trainee chip to see their score, absence %, number of red/amber gaps and tenure.",
+        ],
+    },
+    {
+        n: "17",
         title: "Refresh Data",
         icon: Upload,
         body: [
             "When your skill matrix changes, go to Upload and pick the new .xlsx (keep both sheets: person - skill and assembly line — include a Row name column in the assembly line sheet).",
             "Ensure every row is complete BEFORE uploading — name, surname, date of joining, employee type, mobile number, and every skill cell. Blank rows or missing fields can prevent an associate from being matched to their existing record.",
             "Once entered, these four fields must NEVER be changed for any associate — Name, Surname, Date of Joining, and Mobile Number. Together they act as the associate's unique fingerprint across every future roster upload; changing any of them will break the link to their historical absences, closures, late arrivals, and analytics.",
-            "Uploading replaces the current roster. Each associate is matched to their existing record by (1) mobile number, then (2) first name + surname + date of joining if the mobile is blank. Serial numbers are NOT used for matching — they're not stable across roster updates.",
+            "Uploading replaces the current roster. Each associate is matched to their existing record by (1) mobile number, then (2) first name + surname + date of joining if the mobile is blank. Serial numbers are NOT used for matching — they're not stable across roster updates. Placeholder values like 'No' or 'NA' in the mobile or date of joining columns are ignored for matching — only real numbers and dates count.",
             "New associates get fresh IDs; anyone missing from the new file is removed.",
             "Names shown in reports are frozen at the time each record was written, so historical Analytics and Absenteeism reports stay accurate even if a person is later renamed or removed from the roster.",
             "Existing schedules keep working but should be regenerated if line configuration changed.",
@@ -174,6 +212,9 @@ const glossary = [
     { term: "Delete record", def: "In History, tap the trash icon on any day/shift to remove that record. Logged schedules require an extra confirmation." },
     { term: "Close a line", def: "Ends a running line mid-shift. Every associate on it moves to the Unassigned pool; the column disappears from the board. A 10-second Undo toast lets you reopen the line with associates restored to their original cells. Closure is stamped with a time in Analytics & History." },
     { term: "Suggest another line to run", def: "Ranks every idle master line by how many unassigned associates can fill it. Start the top choice to auto-fill it from the free pool in one click." },
+    { term: "Skill Coverage", def: "Per-skill count of associates marked 'Yes' in the roster. Click a count to expand the list of trained associates." },
+    { term: "Skill count button", def: "On the Persons tab, '4 SKILLS' style button per associate — click to expand or collapse their skill tags." },
+    { term: "Suggested trainees", def: "Heatmap's top 5 per fragile skill, scored on skill priority (40), availability (30), multi-skill gap (20) and tenure (10). Ties rotate daily." },
 ];
 
 export default function SopPage() {

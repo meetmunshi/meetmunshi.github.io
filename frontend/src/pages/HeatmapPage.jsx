@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchPersons, fetchDetails } from "@/lib/api";
+import { fetchPersons, fetchDetails, fetchAbsenceStats } from "@/lib/api";
+import { buildTraineeRanker, severityOf } from "@/lib/trainees";
 import { Flame, GraduationCap } from "lucide-react";
 
 const SUPPORT_LINES = ["Monkey", "KK", "Spares", "Vehicle", "Crimping", "OS", "5S+Others"];
@@ -7,15 +8,16 @@ const SUPPORT_LINES = ["Monkey", "KK", "Spares", "Vehicle", "Crimping", "OS", "5
 export default function HeatmapPage() {
     const [persons, setPersons] = useState([]);
     const [details, setDetails] = useState([]);
+    const [absenceStats, setAbsenceStats] = useState({});
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        Promise.all([fetchPersons(), fetchDetails()])
-            .then(([p, d]) => { setPersons(p); setDetails(d); })
+        Promise.all([fetchPersons(), fetchDetails(), fetchAbsenceStats()])
+            .then(([p, d, a]) => { setPersons(p); setDetails(d); setAbsenceStats(a); })
             .finally(() => setLoading(false));
     }, []);
 
-    const { rows, lines, matrix, coverage, trainingOps } = useMemo(() => {
+    const { rows, lines, matrix, coverage, trainingOps, rankTrainees } = useMemo(() => {
         const rns = [];
         const lns = [];
         const seenR = new Set();
@@ -39,12 +41,19 @@ export default function HeatmapPage() {
         const fragile = Object.values(mtx).filter((v) => v.ratio < 2 && v.count > 0);
         const critical = Object.values(mtx).filter((v) => v.count === 0);
 
-        // Training opportunities: cells with ratio<2 and required>0, sorted by lowest ratio, then highest required
+        // Training opportunities: red skills first, then lowest ratio, then highest required
         const training = Object.entries(mtx)
-            .map(([k, v]) => ({ key: k, ...v, row_name: k.split("||")[0], line: k.split("||")[1] }))
-            .filter((v) => v.required > 0 && v.ratio < 2)
-            .sort((a, b) => a.ratio - b.ratio || b.required - a.required)
+            .map(([k, v]) => ({ key: k, ...v, severity: severityOf(v), row_name: k.split("||")[0], line: k.split("||")[1] }))
+            .filter((v) => v.severity)
+            .sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "red" ? -1 : 1) || a.ratio - b.ratio || b.required - a.required)
             .slice(0, 15);
+
+        // Worst severity per skill, used for the multi-skill gap factor
+        const gapSkills = {};
+        for (const v of Object.values(mtx)) {
+            const sev = severityOf(v);
+            if (sev && gapSkills[v.detail] !== "red") gapSkills[v.detail] = sev;
+        }
 
         return {
             rows: rns,
@@ -52,8 +61,9 @@ export default function HeatmapPage() {
             matrix: mtx,
             coverage: { totalCells, wellCovered, fragile: fragile.length, critical: critical.length },
             trainingOps: training,
+            rankTrainees: buildTraineeRanker(persons, gapSkills, absenceStats),
         };
-    }, [persons, details]);
+    }, [persons, details, absenceStats]);
 
     const cellClass = (v) => {
         if (!v) return "bg-[#0a0a0a] text-zinc-700";
@@ -62,15 +72,6 @@ export default function HeatmapPage() {
         if (v.ratio < 2) return "bg-amber-500/50 text-white font-semibold";
         if (v.ratio < 4) return "bg-emerald-500/30 text-white";
         return "bg-emerald-500/60 text-white font-semibold";
-    };
-
-    // Candidates to train for a training opportunity: persons who lack this skill but have any related skill in same row_name
-    const candidatesFor = (detail) => {
-        return persons
-            .filter((p) => !p.skills?.[detail])
-            .map((p) => ({ p, existing: Object.values(p.skills || {}).filter(Boolean).length }))
-            .sort((a, b) => b.existing - a.existing)
-            .slice(0, 3);
     };
 
     if (loading) return <div className="p-8 text-zinc-500">Loading heatmap…</div>;
@@ -146,8 +147,8 @@ export default function HeatmapPage() {
                         Top Training Opportunities
                     </h2>
                 </div>
-                <p className="text-xs text-zinc-500 mb-4">
-                    These roles have the fewest skilled people. Train the suggested candidates (most cross-skilled first) to eliminate future shortages.
+                <p className="text-xs text-zinc-500 mb-4" data-testid="training-ranking-note">
+                    Red skills are listed first. Up to 5 suggested trainees per skill, ranked by a weighted score: skill priority (red 40 / amber 20), availability (low absence rate, 30), multi-skill gap (untrained on many red/amber skills, 20) and tenure (10). Already-trained associates are excluded; equal scores rotate daily.
                 </p>
                 <div className="border border-white/10">
                     <div className="grid grid-cols-12 px-4 py-3 border-b border-white/10 bg-[#111] text-[10px] uppercase tracking-[0.25em] text-zinc-500">
@@ -163,7 +164,7 @@ export default function HeatmapPage() {
                         </div>
                     )}
                     {trainingOps.map((t) => {
-                        const cands = candidatesFor(t.detail);
+                        const cands = rankTrainees(t.detail, t.severity);
                         return (
                             <div
                                 key={t.key}
@@ -183,15 +184,16 @@ export default function HeatmapPage() {
                                         {t.count}/{t.required}
                                     </span>
                                 </div>
-                                <div className="col-span-3 flex flex-wrap gap-1">
-                                    {cands.map((c) => (
+                                <div className="col-span-3 flex flex-wrap gap-1" data-testid={`training-candidates-${t.key}`}>
+                                    {cands.map((c, i) => (
                                         <span
                                             key={c.p.id}
                                             className="text-[11px] border border-emerald-500/30 bg-emerald-500/5 text-emerald-300 px-2 py-0.5"
-                                            title={`Already has ${c.existing} skills`}
+                                            title={`Rank ${i + 1} · score ${c.score} · absence ${Math.round(c.absenceRate * 100)}% · untrained on ${c.gapCount} red/amber skills · tenure ${(c.tenure / 365).toFixed(1)} yrs`}
+                                            data-testid={`training-candidate-${t.key}-${i}`}
                                         >
                                             {c.p.name} {c.p.surname}
-                                            <span className="ml-1 text-emerald-500/60">({c.existing})</span>
+                                            <span className="ml-1 text-emerald-500/60 font-mono-ibm">{Math.round(c.score)}</span>
                                         </span>
                                     ))}
                                 </div>
