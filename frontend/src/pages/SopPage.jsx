@@ -142,7 +142,7 @@ const steps = [
             "History (calendar): jump into any past day's board. Hover a day (desktop) or tap the trash icon (mobile) to delete an incorrect record — you'll be asked to confirm, and locked schedules show an extra warning. A ⏻N badge marks days where lines were closed.",
             "Delete an entire month (desktop only): hover the month name in the History calendar and a small trash icon appears next to it. Click it, confirm the count, and every day/shift in that month is deleted in one step. This works on both the Active tab and the Archived Records tab (where it permanently removes archived rows). Not exposed on mobile to prevent accidental taps.",
             "Active vs Archived (desktop only): History defaults to the last 3 months of Active records. Anything older auto-moves to an 'Archived Records' tab on the same page — same calendar, tinted amber, with a banner marking it archived. Archived records auto-purge 12 months from their original date. Incomplete shift setups that were never Logged are auto-deleted after 24h. All housekeeping runs automatically at server startup — no manual action needed.",
-            "Heatmap: which Area × Line pairs are fragile — pick trainees for cross-skilling (see Step 16 for how trainees are ranked).",
+            "Heatmap: which Area × Line pairs are fragile — see where cross-skilling is needed (see Step 16).",
         ],
     },
     {
@@ -170,17 +170,13 @@ const steps = [
     },
     {
         n: "16",
-        title: "Heatmap — Suggested Trainees",
+        title: "Heatmap — Training Gaps",
         icon: Flame,
         body: [
-            "Top Training Opportunities lists red (zero or below-requirement coverage) skills first, then amber (fragile) skills.",
-            "Each skill shows up to 5 suggested trainees, ranked by a weighted score out of 100:",
-            "1) Skill priority (40) — red skills carry full weight, amber skills half.",
-            "2) Availability (30) — a lower absence rate across all logged history ranks higher. Rate = days absent ÷ logged days since the associate's date of joining.",
-            "3) Multi-skill gap (20) — associates untrained on many red/amber skills rank higher (red gaps count double), so one training investment closes more gaps.",
-            "4) Tenure (10) — longer service since date of joining ranks higher as a more stable training investment.",
-            "Associates already trained on that skill are never suggested. If two associates score equally, their order rotates once a day so the same names don't always sit on top.",
-            "Hover a trainee chip to see their score, absence %, number of red/amber gaps and tenure.",
+            "Top Training Opportunities lists every skill where coverage is short — red skills first, then amber.",
+            "Red = critical: nobody trained, or fewer trained associates than the line needs. Amber = fragile: enough today, but less than double the requirement, so one absence can cause a shortage.",
+            "Each row shows the Area, Line, Skill, the skilled/required count (e.g. 0/1) and a Red or Amber gap-severity tag.",
+            "No associate names or trainee suggestions appear here. Who to train is decided by the production engineer based on floor observation.",
         ],
     },
     {
@@ -214,7 +210,7 @@ const glossary = [
     { term: "Suggest another line to run", def: "Ranks every idle master line by how many unassigned associates can fill it. Start the top choice to auto-fill it from the free pool in one click." },
     { term: "Skill Coverage", def: "Per-skill count of associates marked 'Yes' in the roster. Click a count to expand the list of trained associates." },
     { term: "Skill count button", def: "On the Persons tab, '4 SKILLS' style button per associate — click to expand or collapse their skill tags." },
-    { term: "Suggested trainees", def: "Heatmap's top 5 per fragile skill, scored on skill priority (40), availability (30), multi-skill gap (20) and tenure (10). Ties rotate daily." },
+    { term: "Training gaps", def: "Heatmap's Top Training Opportunities — skills with red (critical) or amber (fragile) coverage. Shows gaps only; the production engineer picks who to train." },
 ];
 
 export default function SopPage() {

@@ -37,7 +37,6 @@ export const fillShortages = (date, shift = "day") =>
 export const previewFillShortages = (date, shift = "day") =>
     api.post(`/schedule/${date}/fill-shortages`, null, { params: { shift, preview: true } }).then((r) => r.data);
 export const fetchSkillCoverage = () => api.get("/skills/coverage").then((r) => r.data);
-export const fetchAbsenceStats = () => api.get("/persons/absence-stats").then((r) => r.data);
 export const skillsCoverageExportUrl = (fmt = "xlsx", sort = "count") =>
     `${API}/skills/coverage/export?fmt=${fmt}&sort=${sort}`;
 export const personsExportUrl = (fmt = "xlsx") => `${API}/persons/export?fmt=${fmt}`;

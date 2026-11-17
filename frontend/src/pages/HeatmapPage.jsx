@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchPersons, fetchDetails, fetchAbsenceStats } from "@/lib/api";
-import { buildTraineeRanker, severityOf } from "@/lib/trainees";
+import { fetchPersons, fetchDetails } from "@/lib/api";
+
+const severityOf = (v) => {
+    if (!v || v.required <= 0) return null;
+    if (v.count === 0 || v.ratio < 1) return "red";
+    if (v.ratio < 2) return "amber";
+    return null;
+};
 import { Flame, GraduationCap } from "lucide-react";
 
 const SUPPORT_LINES = ["Monkey", "KK", "Spares", "Vehicle", "Crimping", "OS", "5S+Others"];
@@ -8,16 +14,15 @@ const SUPPORT_LINES = ["Monkey", "KK", "Spares", "Vehicle", "Crimping", "OS", "5
 export default function HeatmapPage() {
     const [persons, setPersons] = useState([]);
     const [details, setDetails] = useState([]);
-    const [absenceStats, setAbsenceStats] = useState({});
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        Promise.all([fetchPersons(), fetchDetails(), fetchAbsenceStats()])
-            .then(([p, d, a]) => { setPersons(p); setDetails(d); setAbsenceStats(a); })
+        Promise.all([fetchPersons(), fetchDetails()])
+            .then(([p, d]) => { setPersons(p); setDetails(d); })
             .finally(() => setLoading(false));
     }, []);
 
-    const { rows, lines, matrix, coverage, trainingOps, rankTrainees } = useMemo(() => {
+    const { rows, lines, matrix, coverage, trainingOps } = useMemo(() => {
         const rns = [];
         const lns = [];
         const seenR = new Set();
@@ -47,22 +52,14 @@ export default function HeatmapPage() {
             .filter((v) => v.severity)
             .sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "red" ? -1 : 1) || a.ratio - b.ratio || b.required - a.required);
 
-        // Worst severity per skill, used for the multi-skill gap factor
-        const gapSkills = {};
-        for (const v of Object.values(mtx)) {
-            const sev = severityOf(v);
-            if (sev && gapSkills[v.detail] !== "red") gapSkills[v.detail] = sev;
-        }
-
         return {
             rows: rns,
             lines: lns,
             matrix: mtx,
             coverage: { totalCells, wellCovered, fragile: fragile.length, critical: critical.length },
             trainingOps: training,
-            rankTrainees: buildTraineeRanker(persons, gapSkills, absenceStats),
         };
-    }, [persons, details, absenceStats]);
+    }, [persons, details]);
 
     const cellClass = (v) => {
         if (!v) return "bg-[#0a0a0a] text-zinc-700";
@@ -146,16 +143,16 @@ export default function HeatmapPage() {
                         Top Training Opportunities
                     </h2>
                 </div>
-                <p className="text-xs text-zinc-500 mb-4" data-testid="training-ranking-note">
-                    Red skills are listed first. Up to 5 suggested trainees per skill, ranked by a weighted score: skill priority (red 40 / amber 20), availability (low absence rate, 30), multi-skill gap (untrained on many red/amber skills, 20) and tenure (10). Already-trained associates are excluded; equal scores rotate daily.
+                <p className="text-xs text-zinc-500 mb-4" data-testid="training-gaps-note">
+                    Skills where coverage is short — red first (critical), then amber (fragile). Who to train is decided by the production engineer based on floor observation.
                 </p>
                 <div className="border border-white/10">
                     <div className="grid grid-cols-12 px-4 py-3 border-b border-white/10 bg-[#111] text-[10px] uppercase tracking-[0.25em] text-zinc-500">
                         <div className="col-span-3">Area</div>
                         <div className="col-span-2">Line</div>
-                        <div className="col-span-3">Skill (Detail)</div>
+                        <div className="col-span-4">Skill (Detail)</div>
                         <div className="col-span-1 text-center">Skilled</div>
-                        <div className="col-span-3">Suggested trainees</div>
+                        <div className="col-span-2 text-right">Gap severity</div>
                     </div>
                     {trainingOps.length === 0 && (
                         <div className="p-6 text-center text-zinc-500 text-sm">
@@ -163,38 +160,29 @@ export default function HeatmapPage() {
                         </div>
                     )}
                     {trainingOps.map((t) => {
-                        const cands = rankTrainees(t.detail, t.severity);
+                        const red = t.severity === "red";
                         return (
                             <div
                                 key={t.key}
-                                className="grid grid-cols-12 px-4 py-3 border-b border-white/5 text-sm items-start"
+                                className="grid grid-cols-12 px-4 py-3 border-b border-white/5 text-sm items-center"
                                 data-testid={`training-row-${t.key}`}
                             >
                                 <div className="col-span-3 font-semibold uppercase text-xs">{t.row_name}</div>
                                 <div className="col-span-2 text-zinc-300 text-xs uppercase font-mono-ibm">{t.line}</div>
-                                <div className="col-span-3 text-zinc-400 text-xs">{t.detail}</div>
-                                <div className="col-span-1 text-center">
-                                    <span
-                                        className={`inline-flex items-center gap-1 font-mono-ibm text-sm ${
-                                            t.severity === "red" ? "text-red-400" : "text-amber-400"
-                                        }`}
-                                    >
-                                        {t.severity === "red" && <Flame className="w-3 h-3" />}
-                                        {t.count}/{t.required}
-                                    </span>
+                                <div className="col-span-4 text-zinc-400 text-xs">{t.detail}</div>
+                                <div className={`col-span-1 text-center font-mono-ibm text-sm ${red ? "text-red-400" : "text-amber-400"}`}>
+                                    {t.count}/{t.required}
                                 </div>
-                                <div className="col-span-3 flex flex-wrap gap-1" data-testid={`training-candidates-${t.key}`}>
-                                    {cands.map((c, i) => (
-                                        <span
-                                            key={c.p.id}
-                                            className="text-[11px] border border-emerald-500/30 bg-emerald-500/5 text-emerald-300 px-2 py-0.5"
-                                            title={`Rank ${i + 1} · score ${c.score} · absence ${Math.round(c.absenceRate * 100)}% · untrained on ${c.gapCount} red/amber skills · tenure ${(c.tenure / 365).toFixed(1)} yrs`}
-                                            data-testid={`training-candidate-${t.key}-${i}`}
-                                        >
-                                            {c.p.name} {c.p.surname}
-                                            <span className="ml-1 text-emerald-500/60 font-mono-ibm">{Math.round(c.score)}</span>
-                                        </span>
-                                    ))}
+                                <div className="col-span-2 text-right">
+                                    <span
+                                        className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-bold px-2 py-0.5 border ${
+                                            red ? "border-red-500/40 bg-red-500/10 text-red-300" : "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                                        }`}
+                                        data-testid={`training-severity-${t.key}`}
+                                    >
+                                        {red && <Flame className="w-3 h-3" />}
+                                        {red ? "Red" : "Amber"}
+                                    </span>
                                 </div>
                             </div>
                         );

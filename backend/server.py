@@ -2141,32 +2141,6 @@ async def stats():
     return {"persons": persons, "details": details, "lines": len(lines), "schedules": schedules}
 
 
-@api_router.get("/persons/absence-stats")
-async def persons_absence_stats():
-    """Per-associate absence rate across all logged history (active + archived).
-    rate = distinct absent dates / distinct logged dates on or after the associate's DOJ."""
-    persons = await db.persons.find({}, {"_id": 0, "id": 1, "date_of_joining": 1}).to_list(2000)
-    scheds = await db.schedules.find(
-        {"logged_at": {"$ne": None}}, {"_id": 0, "date": 1, "absent_person_ids": 1}
-    ).to_list(20000)
-    logged_dates = sorted({s["date"] for s in scheds if s.get("date")})
-    absent_dates: Dict[str, set] = defaultdict(set)
-    for s in scheds:
-        for pid in s.get("absent_person_ids") or []:
-            absent_dates[pid].add(s["date"])
-    out = {}
-    for p in persons:
-        doj = (p.get("date_of_joining") or "")[:10]
-        eligible = [d for d in logged_dates if not doj or d >= doj]
-        absent = len(absent_dates.get(p["id"], set()))
-        out[p["id"]] = {
-            "absent_days": absent,
-            "logged_days": len(eligible),
-            "rate": round(absent / len(eligible), 4) if eligible else 0,
-        }
-    return out
-
-
 @api_router.get("/skills/coverage")
 async def skills_coverage():
     """Return per-skill trained-associate counts.

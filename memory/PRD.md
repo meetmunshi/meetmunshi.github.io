@@ -79,8 +79,9 @@
 - P2: SMS / WhatsApp broadcast of daily schedule to persons.
 
 - 2026-06: Persons page — skill tags replaced by a clickable "N skills" button that opens and closes the tags inline (several rows can be open at once; 0 skills shows a greyed-out label). Self-tested via screenshot.
-- 2026-06: Heatmap suggested trainees re-ranked by weighted score (skill priority 40 red/20 amber, availability 30 from all-logged-history absence rate, multi-skill gap 20, tenure 10), top 5 per skill, trained excluded, ties rotate daily (lib/trainees.js + GET /api/persons/absence-stats). All fragile skills listed (red first, no 15 cap).
+- 2026-06 (SUPERSEDED — removed below): Heatmap suggested trainees re-ranked by weighted score (skill priority 40 red/20 amber, availability 30 from all-logged-history absence rate, multi-skill gap 20, tenure 10), top 5 per skill, trained excluded, ties rotate daily (lib/trainees.js + GET /api/persons/absence-stats). All fragile skills listed (red first, no 15 cap).
 - 2026-06: Skill Coverage — trained count is an expand/collapse button listing trained associates (/api/skills/coverage rows now include `associates`).
 - 2026-06: SOP steps 14-17 + glossary for Skill Coverage, Persons skill toggle, Heatmap trainees.
 - 2026-06: BUG FIX upload matching — placeholder mobile ("No") / DOJ no longer used; mobile needs >=7 digits, DOJ ISO; ids can't be claimed twice per upload. Preview DB repaired (14 duplicate ids reassigned). Prod DB needs a roster re-upload to self-heal.
 - KNOWN DATA ISSUE (open): 17 roster skill headers (e.g. 'X-smart Sleek P & C2', 'E3 sub assembly - 35') don't match line detail names ('X-Smart Sleek P & C', 'E3 sub assembly - 3') → shown as 0 trained, affects board auto-assign for E3 / X-Smart Sleek. Fix in Excel or add header-mismatch warning on upload.
+- 2026-06: Heatmap Top Training Opportunities now shows gaps only (Area, Line, Skill, skilled/required, Red/Amber tag) — NO associate names. trainees.js + /api/persons/absence-stats removed. SOP step 16 renamed 'Heatmap — Training Gaps'.
