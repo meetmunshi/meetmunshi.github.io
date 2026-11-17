@@ -45,8 +45,7 @@ export default function HeatmapPage() {
         const training = Object.entries(mtx)
             .map(([k, v]) => ({ key: k, ...v, severity: severityOf(v), row_name: k.split("||")[0], line: k.split("||")[1] }))
             .filter((v) => v.severity)
-            .sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "red" ? -1 : 1) || a.ratio - b.ratio || b.required - a.required)
-            .slice(0, 15);
+            .sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "red" ? -1 : 1) || a.ratio - b.ratio || b.required - a.required);
 
         // Worst severity per skill, used for the multi-skill gap factor
         const gapSkills = {};
@@ -177,10 +176,10 @@ export default function HeatmapPage() {
                                 <div className="col-span-1 text-center">
                                     <span
                                         className={`inline-flex items-center gap-1 font-mono-ibm text-sm ${
-                                            t.count === 0 ? "text-red-400" : "text-amber-400"
+                                            t.severity === "red" ? "text-red-400" : "text-amber-400"
                                         }`}
                                     >
-                                        {t.count === 0 && <Flame className="w-3 h-3" />}
+                                        {t.severity === "red" && <Flame className="w-3 h-3" />}
                                         {t.count}/{t.required}
                                     </span>
                                 </div>

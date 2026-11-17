@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 22. Backend: 6/6 pytest pass (absence-stats shape and rate math for all 75 associates; skills/coverage associates list matches trained_count and the persons' skills exactly; CSV/XLSX exports with both sorts). Frontend: Heatmap Top Training Opportunities shows 15 rows, each with 5 chips, scores in descending order, tooltip breakdown present, no chip is trained on the row's exact detail key, red rows come before amber rows, and the order is the same after a reload. Skill Coverage: the expand/collapse count button works, several rows can be open at once, chip names match the API, and filter/sort/empty state work. Persons: the skills toggle expands and collapses, and several can be open. SOP: steps 14-17 and the 3 glossary entries are present. One CRITICAL data/matching defect found. 17 skill headers in the current roster ('E3 P & C2', 'X-smart Sleek P & C2', 'E3 testing7' ...) do not equal the line_details detail names ('E3 P & C', 'X-Smart Sleek P & C', 'E3 testing'). Because of this the Heatmap shows 17 false 'Critical' 0/N cells, and the suggested trainees on those rows are people who are actually trained. Example: all 5 chips on 'X-Smart Sleek P & C' (Ajit Chauhan, Harshad Jadav, Viral Prajapati, Jaydeepsinh Chauhan, Harsha Mecwan) have 'X-smart Sleek P & C2'=true.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/upload-excel (parse_excel_bytes / _parse_persons_sheet)", "issue": "Skill column headers are stored verbatim, and the current roster has 17 headers with trailing digits and different case (e.g. 'X-smart Sleek P & C2', 'E3 sub assembly - 35', 'E3 Trolley10'). These do not match the assembly-line 'detail' values ('X-Smart Sleek P & C', 'E3 sub assembly - 3', 'E3 Trolley'). All skill lookups (heatmap counts, trainee exclusion, and most likely board auto-assignment for the E3 / X-Smart Sleek lines) match keys exactly, so these 17 skills look like nobody is trained on them. The upload gives no warning about skill headers or details that don't match.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/upload-excel matching", "issue": "The mobile used for matching is only strip()'d, not reduced to digits, so '98765 43210' and '9876543210' (or a +91 prefix) do not match. If two existing persons share a mobile, by_mobile silently keeps the last one. Otherwise the logic is correct: >=7 digits, ISO DOJ, a claimed set that stops an id being reused twice, and a fallback to identity when the mobile's id is already claimed."},
+      {"endpoint": "GET /api/persons/absence-stats", "issue": "Eligibility compares the raw DOJ string lexicographically. A non-ISO DOJ (e.g. 'No') makes the eligible list empty, which gives rate 0. Acceptable, but undocumented."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "HeatmapPage trainingOps", "issue": ".slice(0, 15) cuts off the list. The data has 17 red and 1 amber skills, so 2 red rows and the only amber row (Spares 2/2) are never shown. The 'red before amber' ordering therefore never surfaces amber rows.", "selector": "[data-testid^=training-row-]", "priority": "MEDIUM"},
+      {"component": "HeatmapPage Skilled column", "issue": "The Flame icon and red text depend on count===0, but severity 'red' also covers 0<ratio<1. Red rows with some trained people would render amber with no flame. Not visible with the current data.", "selector": "[data-testid^=training-row-] span", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Heatmap suggested trainees", "issue": "This is a knock-on effect of the skill-key mismatch. Every displayed row has an untrained pool of 75, so all 15 rows show the same 5 people (scores 100,100,99,98,97), and those people are actually trained under the suffixed key.", "affected_selectors": ["[data-testid^=training-candidate-]"]}
+    ],
+    "design_issues": [
+      {"screen": "Heatmap Top Training Opportunities", "issues": ["The same 5 trainees repeat on every row. Consider spreading suggestions across rows (penalise an associate already suggested on a higher row)."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter22.py", "/app/test_reports/pytest/pytest_iter22.xml"],
+  "action_items": [
+    "HIGH: Reconcile the skill headers with the line_details detail names. Either normalise when matching (case-insensitive, strip a trailing serial digit glued to the header), or validate on upload and return a warning listing unmatched skill headers and details. The current DB has 17 mismatched skills (all E3 and X-Smart Sleek). Ask the user to fix the Excel, or add normalisation and re-upload.",
+    "MEDIUM: Heatmap trainingOps slice(0,15) hides 2 red rows and the amber row. Show all of them, or add a 'show more' control.",
+    "LOW: Base the Flame/red styling on t.severity==='red', not on count===0.",
+    "LOW: Reduce the mobile to digits before matching in upload-excel.",
+    "LOW: dailyHash uses the UTC date (toISOString), so the rotation happens at 05:30 IST rather than local midnight."
+  ],
+  "critical_code_review_comments": [
+    "trainees.js: the ranking formula matches the spec (40/20 priority, 30*(1-rate), 20*gap/maxGap with red=2 and amber=1, 10*tenure/maxTenure). Exclusion uses exact skill keys, so it inherits the header-mismatch bug.",
+    "server.py upload-excel lines 310-357: the claimed-set and validity checks are correct. None-in-claimed is handled because prior_id stays None.",
+    "server.py is 2480+ lines and should be split into modules."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter22.py"],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "95% (all requested flows pass; data-matching defect plus row truncation)"},
+  "seed_data_creation": "None. Read-only testing; no upload performed.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Routes: /heatmap, /skills (Skill Coverage), /persons, /sop. Roster has 75 persons and 88 skill keys. 17 keys have a suffix and case mismatch against /api/details. Only 1 logged schedule exists, so absence rates are 0. Do not upload files. test_iter22.py is read-only.",
+  "rca of the issue": "The heatmap counts persons where p.skills[d.detail] is truthy, matching keys exactly. The roster's Excel headers for the E3 and X-Smart Sleek columns have a serial digit concatenated (e.g. 'P & C2') and use 'X-smart' instead of 'X-Smart', so the keys never match. Reproduce: GET /api/details lists 'E3 P & C'; GET /api/persons skills has 'E3 P & C2'. Mitigation: normalise the keys or validate them on upload."
+}
